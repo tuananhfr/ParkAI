@@ -134,7 +134,7 @@ class AnnotatedVideoTrack(VideoStreamTrack):
 # ==================== Startup & Shutdown ====================
 @app.on_event("startup")
 async def startup():
-    global camera_manager, detection_service, ocr_service
+    global camera_manager, detection_service, ocr_service, parking_manager, barrier_controller
     
     try:
         # QUAN TRỌNG: Set event loop cho WebSocket manager
