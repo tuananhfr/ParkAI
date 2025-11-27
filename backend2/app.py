@@ -15,6 +15,8 @@ from camera_manager import CameraManager
 from detection_service import DetectionService
 from ocr_service import OCRService
 from websocket_manager import WebSocketManager
+from parking_manager import ParkingManager
+from barrier_controller import BarrierController
 
 # ==================== FastAPI App ====================
 app = FastAPI(title="License Plate Detection API")
@@ -32,6 +34,8 @@ camera_manager = None
 detection_service = None
 ocr_service = None
 websocket_manager = WebSocketManager()
+parking_manager = None
+barrier_controller = None
 
 # WebRTC
 pcs = set()
@@ -155,6 +159,20 @@ async def startup():
             print("⚠️  OCR disabled in config")
             ocr_service = None
         
+        # Initialize parking manager
+        print("💾 Initializing parking manager...")
+        parking_manager = ParkingManager(db_file=config.DB_FILE)
+        print(f"✅ Parking manager ready")
+
+        # Initialize barrier controller
+        print("🚪 Initializing barrier controller...")
+        barrier_controller = BarrierController(
+            enabled=config.BARRIER_ENABLED,
+            gpio_pin=config.BARRIER_GPIO_PIN,
+            auto_close_time=config.BARRIER_AUTO_CLOSE_TIME
+        )
+        print(f"✅ Barrier controller ready")
+
         # Initialize detection service
         detection_service = DetectionService(
             camera_manager,
@@ -162,7 +180,7 @@ async def startup():
             ocr_service
         )
         detection_service.start()
-        
+
     except Exception as e:
         print(f"❌ Startup failed: {e}")
         import traceback
@@ -170,14 +188,17 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    global camera_manager, detection_service
-    
+    global camera_manager, detection_service, barrier_controller
+
     if detection_service:
         detection_service.stop()
-    
+
     if camera_manager:
         camera_manager.stop()
-    
+
+    if barrier_controller:
+        barrier_controller.cleanup()
+
     coros = [pc.close() for pc in pcs]
     await asyncio.gather(*coros)
     pcs.clear()
@@ -319,6 +340,148 @@ async def websocket_detections(websocket: WebSocket):
     except Exception as e:
         print(f"❌ WebSocket error: {e}")
         websocket_manager.disconnect(websocket)
+
+
+# ==================== Parking Management API ====================
+
+@app.post("/api/open-barrier")
+async def open_barrier(request: Request):
+    """
+    User nhấn nút mở cửa
+
+    Body: {
+        "plate_text": "30G56789",
+        "confidence": 0.92,
+        "source": "auto" | "manual"
+    }
+    """
+    global parking_manager, barrier_controller
+
+    try:
+        data = await request.json()
+
+        plate_text = data.get('plate_text', '').strip()
+        confidence = data.get('confidence', 0.0)
+        source = data.get('source', 'manual')
+
+        if not plate_text:
+            return JSONResponse({
+                "success": False,
+                "error": "Biển số không được để trống"
+            }, status_code=400)
+
+        # Process entry với config của camera này
+        result = parking_manager.process_entry(
+            plate_text=plate_text,
+            camera_id=config.CAMERA_ID,
+            camera_type=config.CAMERA_TYPE,
+            camera_name=config.CAMERA_NAME,
+            confidence=confidence,
+            source=source
+        )
+
+        if not result['success']:
+            return JSONResponse(result, status_code=400)
+
+        # Mở barrier
+        if barrier_controller and config.BARRIER_ENABLED:
+            barrier_controller.open_barrier()
+
+        return JSONResponse({
+            **result,
+            "barrier_opened": config.BARRIER_ENABLED,
+            "camera_info": {
+                "id": config.CAMERA_ID,
+                "name": config.CAMERA_NAME,
+                "type": config.CAMERA_TYPE
+            }
+        })
+
+    except Exception as e:
+        print(f"❌ Error in open_barrier: {e}")
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/api/history")
+async def get_history(limit: int = 100, today_only: bool = False, status: str = None):
+    """Lấy lịch sử xe vào/ra"""
+    global parking_manager
+
+    try:
+        history = parking_manager.get_history(
+            limit=limit,
+            today_only=today_only,
+            status=status
+        )
+        stats = parking_manager.get_stats()
+
+        return JSONResponse({
+            "success": True,
+            "count": len(history),
+            "stats": stats,
+            "history": history
+        })
+    except Exception as e:
+        print(f"❌ Error in get_history: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/api/stats")
+async def get_stats():
+    """Thống kê"""
+    global parking_manager
+
+    try:
+        stats = parking_manager.get_stats()
+        return JSONResponse({
+            "success": True,
+            **stats
+        })
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/api/camera/info")
+async def camera_info():
+    """Thông tin camera này"""
+    return JSONResponse({
+        "success": True,
+        "camera": {
+            "id": config.CAMERA_ID,
+            "name": config.CAMERA_NAME,
+            "type": config.CAMERA_TYPE,
+            "location": config.CAMERA_LOCATION
+        }
+    })
+
+
+@app.get("/api/barrier/status")
+async def barrier_status():
+    """Trạng thái barrier"""
+    global barrier_controller
+
+    if barrier_controller:
+        return JSONResponse({
+            "success": True,
+            **barrier_controller.get_status()
+        })
+    else:
+        return JSONResponse({
+            "success": False,
+            "error": "Barrier controller not initialized"
+        }, status_code=500)
+
 
 # ==================== Run Server ====================
 if __name__ == '__main__':

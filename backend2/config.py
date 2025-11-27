@@ -47,4 +47,25 @@ ONNX_OCR_MODEL_PATH = "/home/phamt/Desktop/parkAI/backend/models/ocr.onnx"  # v�
 # Server settings
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5000
+
+# ==================== CAMERA IDENTIFICATION (MULTI-CAMERA SUPPORT) ====================
+CAMERA_ID = 1  # Unique ID cho mỗi camera (1, 2, 3, ...)
+CAMERA_NAME = "Cổng vào A"  # Tên hiển thị
+CAMERA_TYPE = "ENTRY"  # "ENTRY" (vào) | "EXIT" (ra)
+CAMERA_LOCATION = "Gate A"  # Vị trí
+
+# ==================== DATABASE ====================
+# SQLite database file (local trên mỗi camera)
+DB_FILE = "data/parking.db"
+
+# Nếu muốn mỗi camera có DB riêng (sync về server sau):
+# DB_FILE = f"data/parking_cam{CAMERA_ID}.db"
+
+# ==================== BARRIER CONTROL ====================
+BARRIER_ENABLED = False  # Set True nếu có barrier
+BARRIER_GPIO_PIN = 18  # GPIO pin điều khiển relay
+BARRIER_AUTO_CLOSE_TIME = 5.0  # Tự động đóng sau 5 giây
+
+# ==================== CENTRAL SERVER (để sync data) ====================
+CENTRAL_SERVER_URL = "http://192.168.1.100:8000"  # Server tổng
 # ===========================================================================

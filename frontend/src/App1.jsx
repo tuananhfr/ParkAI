@@ -155,9 +155,9 @@ const CameraView = ({ cameraId, backendUrl, wsUrl }) => {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Xóa detections sau 2 giây không nhận được update
+    // Xóa detections sau 1 giây không nhận được update (xe đã đi khỏi)
     const now = Date.now();
-    if (now - lastDetectionTimeRef.current > 2000) {
+    if (now - lastDetectionTimeRef.current > 1000) {
       lastDetectionsRef.current = [];
       setDetections([]);
       return;

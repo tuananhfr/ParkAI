@@ -48,6 +48,11 @@ class DetectionService:
         self.outputs_success = 0
         self.outputs_fail = 0
 
+        # VEHICLE TRACKING - tránh duplicate detections cho cùng 1 xe
+        self.current_vehicle = None  # {'text': str, 'confidence': float, 'first_seen': time, 'last_seen': time, 'best_confidence': float}
+        self.vehicle_timeout = 10.0  # Sau 10s không thấy xe, cho phép xe mới vào
+        self.similarity_threshold = 0.7  # Nếu text giống > 70%, coi là cùng xe
+
     def start(self):
         """Bắt đầu detection thread"""
         if self.running:
@@ -99,6 +104,9 @@ class DetectionService:
                 detection_results = []
                 frame = frame_data.get('frame')
 
+                # Check xem frame này có chạy OCR không
+                should_run_ocr = (self.total_frames % self.ocr_frame_skip == 0)
+
                 for detection in detections:
                     # Detection object có .box (x, y, w, h) format
                     x, y, w, h = detection.box
@@ -121,9 +129,6 @@ class DetectionService:
                         # Tạo bbox key để cache
                         bbox_key = (x, y, w, h)
 
-                        # Chỉ chạy OCR mỗi N frames
-                        should_run_ocr = (self.total_frames % self.ocr_frame_skip == 0)
-
                         if should_run_ocr:
                             try:
                                 # Validate bbox trong frame boundaries
@@ -140,8 +145,17 @@ class DetectionService:
                                     if crop.size > 0:
                                         text = self.ocr_service.recognize(crop)
                                         if text:
-                                            detection_dict['text'] = text
-                                            self.last_ocr_results[bbox_key] = text
+                                            # LỌC PATTERN BIỂN SỐ VIỆT NAM
+                                            if self._is_valid_vietnamese_plate(text):
+                                                # VEHICLE TRACKING LOGIC
+                                                is_new_vehicle = self._process_vehicle_detection(text, confidence, current_time)
+
+                                                # Chỉ thêm text vào detection nếu là xe mới hoặc update xe hiện tại
+                                                if is_new_vehicle or self.current_vehicle:
+                                                    detection_dict['text'] = text
+                                                    self.last_ocr_results[bbox_key] = text
+                                            else:
+                                                print(f"⚠️  Filtered invalid plate: '{text}'")
                             except Exception as e:
                                 print(f"❌ OCR error: {e}")
                         else:
@@ -154,13 +168,10 @@ class DetectionService:
                 if len(detection_results) > 0:
                     self.total_detections += len(detection_results)
 
-                # Broadcast LUÔN - kể cả khi empty (để frontend update smooth)
-                self.websocket_manager.broadcast_detections(detection_results)
-                if detection_results:
-                    # Log detections with OCR text
-                    for det in detection_results:
-                        if 'text' in det:
-                            print(f"🚗 Biển số: {det['text']} (confidence: {det['confidence']:.2f})")
+                    # GỬI MỌI FRAME CÓ DETECTION (để boxes hiển thị liên tục)
+                    self.websocket_manager.broadcast_detections(detection_results)
+
+                    # Log được xử lý trong _process_vehicle_detection rồi, không cần log lại ở đây
 
                 # Cleanup OCR cache mỗi 100 frames để tránh memory leak
                 if self.total_frames % 100 == 0:
@@ -253,6 +264,153 @@ class DetectionService:
                 traceback.print_exc()
                 self._parse_error_logged = True
             return []
+
+    def _process_vehicle_detection(self, text, confidence, current_time):
+        """
+        Xử lý vehicle tracking - tránh duplicate detections
+
+        Return: True nếu là xe mới (cần log/broadcast), False nếu là xe cũ
+        """
+        # Nếu không có xe nào đang track
+        if self.current_vehicle is None:
+            # Xe mới vào
+            self.current_vehicle = {
+                'text': text,
+                'confidence': confidence,
+                'first_seen': current_time,
+                'last_seen': current_time,
+                'best_confidence': confidence
+            }
+            print(f"🚗 NEW VEHICLE: {text} (confidence: {confidence:.2f})")
+            return True
+
+        # Đã có xe đang track
+        time_since_last_seen = current_time - self.current_vehicle['last_seen']
+
+        # Check timeout - nếu quá 10s không thấy xe, xe đã đi
+        if time_since_last_seen > self.vehicle_timeout:
+            # Xe cũ đã đi, xe mới vào
+            print(f"⏱️  Vehicle timeout ({time_since_last_seen:.1f}s), accepting new vehicle")
+            self.current_vehicle = {
+                'text': text,
+                'confidence': confidence,
+                'first_seen': current_time,
+                'last_seen': current_time,
+                'best_confidence': confidence
+            }
+            print(f"🚗 NEW VEHICLE: {text} (confidence: {confidence:.2f})")
+            return True
+
+        # Xe vẫn trong view - check similarity
+        similarity = self._levenshtein_similarity(text, self.current_vehicle['text'])
+
+        if similarity >= self.similarity_threshold:
+            # Cùng xe - update last_seen
+            self.current_vehicle['last_seen'] = current_time
+
+            # Update text nếu confidence cao hơn
+            if confidence > self.current_vehicle['best_confidence']:
+                old_text = self.current_vehicle['text']
+                self.current_vehicle['text'] = text
+                self.current_vehicle['confidence'] = confidence
+                self.current_vehicle['best_confidence'] = confidence
+                print(f"📝 UPDATE: {old_text} → {text} (confidence: {confidence:.2f}, similarity: {similarity:.2%})")
+            else:
+                # Confidence thấp hơn, giữ nguyên text cũ
+                print(f"📌 KEEP: {self.current_vehicle['text']} (new reading: {text}, similarity: {similarity:.2%})")
+
+            return False  # Không phải xe mới
+        else:
+            # Text khác xa (< 70% similar) - CHỜ THÊM ĐỂ CHẮC CHẮN
+            # Có thể là: (1) OCR đọc sai hoặc (2) xe khác
+            # Nếu đã thấy xe cũ trong vòng 5s gần đây, ignore reading mới (coi như OCR sai)
+            time_in_view = current_time - self.current_vehicle['first_seen']
+
+            if time_in_view < 5.0:
+                # Xe mới vào chưa lâu, có thể OCR đang ổn định → ignore
+                print(f"⚠️  IGNORE: {text} (similarity: {similarity:.2%} with {self.current_vehicle['text']}, vehicle still in view)")
+                return False
+            else:
+                # Xe đã ở trong view > 5s, reading mới quá khác → có thể là xe mới
+                # Accept như xe mới
+                print(f"🔄 REPLACE: {self.current_vehicle['text']} → {text} (similarity: {similarity:.2%}, long time in view)")
+                self.current_vehicle = {
+                    'text': text,
+                    'confidence': confidence,
+                    'first_seen': current_time,
+                    'last_seen': current_time,
+                    'best_confidence': confidence
+                }
+                return True
+
+    def _levenshtein_similarity(self, s1, s2):
+        """
+        Tính similarity giữa 2 string bằng Levenshtein distance
+        Return: 0.0 - 1.0 (1.0 = hoàn toàn giống)
+        """
+        if s1 == s2:
+            return 1.0
+
+        if len(s1) == 0 or len(s2) == 0:
+            return 0.0
+
+        # Levenshtein distance algorithm
+        len1, len2 = len(s1), len(s2)
+        distances = [[0] * (len2 + 1) for _ in range(len1 + 1)]
+
+        for i in range(len1 + 1):
+            distances[i][0] = i
+        for j in range(len2 + 1):
+            distances[0][j] = j
+
+        for i in range(1, len1 + 1):
+            for j in range(1, len2 + 1):
+                cost = 0 if s1[i-1] == s2[j-1] else 1
+                distances[i][j] = min(
+                    distances[i-1][j] + 1,      # deletion
+                    distances[i][j-1] + 1,      # insertion
+                    distances[i-1][j-1] + cost  # substitution
+                )
+
+        # Convert distance to similarity (0-1)
+        max_len = max(len1, len2)
+        similarity = 1.0 - (distances[len1][len2] / max_len)
+        return similarity
+
+    def _is_valid_vietnamese_plate(self, text):
+        """
+        Kiểm tra text có phù hợp với format biển số Việt Nam không
+
+        Formats hợp lệ:
+        - 1 dòng: 29A12345, 51F98765 (2-3 số + 1 chữ + 4-5 số)
+        - 2 dòng: 29A-12345, 51F-98765 (có dấu -)
+        """
+        import re
+
+        if not text or len(text) < 6:
+            return False
+
+        # Remove spaces và uppercase
+        text = text.strip().upper().replace(" ", "")
+
+        # Pattern biển số VN:
+        # - Bắt đầu: 2-3 chữ số (mã tỉnh)
+        # - Theo sau: 1 chữ cái (A-Z, không có I, O, Q, W)
+        # - Kết thúc: 4-5 chữ số
+        # - Có thể có dấu - ở giữa (biển 2 dòng)
+
+        patterns = [
+            r'^\d{2}[A-HJ-NP-Z]\d{4,5}$',      # 29A12345
+            r'^\d{2}[A-HJ-NP-Z]-?\d{4,5}$',    # 29A-12345
+            r'^\d{3}[A-HJ-NP-Z]\d{4,5}$',      # 123A12345 (xe công vụ)
+            r'^\d{3}[A-HJ-NP-Z]-?\d{4,5}$',    # 123A-12345
+        ]
+
+        for pattern in patterns:
+            if re.match(pattern, text):
+                return True
+
+        return False
 
     @lru_cache
     def _get_labels(self):
