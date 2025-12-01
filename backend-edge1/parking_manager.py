@@ -20,11 +20,14 @@ class ParkingManager:
         if not text:
             return None, None
 
+        # Bỏ ký tự đặc biệt, CHỈ GIỮ SỐ + CHỮ
         clean_text = re.sub(r'[^A-Z0-9]', '', text.upper())
 
+        # Patterns biển số VN: 2-3 số + 1-2 chữ + 4-6 số
         patterns = [
-            r"^[0-9]{2}[A-Z][0-9]{4,5}$",
-            r"^[0-9]{3}[A-Z][0-9]{4,5}$",
+            r"^[0-9]{2}[A-Z]{1,2}[0-9]{4,6}$",   # 29A12345, 29AB12345, 29A1234, 29A112345
+            r"^[0-9]{3}[A-Z]{1,2}[0-9]{4,6}$",   # 123A12345 (công vụ)
+            r"^[0-9]{2}[A-Z][0-9][0-9]{4,5}$",   # 99E122268, 29A112345 (xe máy: 2 số + chữ + số + 4-5 số)
         ]
 
         matched = False
@@ -36,21 +39,8 @@ class ParkingManager:
         if not matched:
             return None, None
 
-        # Format display
-        if len(clean_text) == 8:
-            prefix = clean_text[:3]
-            suffix = clean_text[3:]
-            display_text = f"{prefix}-{suffix[:3]}.{suffix[3:]}"
-        elif len(clean_text) == 7:
-            prefix = clean_text[:3]
-            suffix = clean_text[3:]
-            display_text = f"{prefix}-{suffix}"
-        elif len(clean_text) == 9:
-            prefix = clean_text[:4]
-            suffix = clean_text[4:]
-            display_text = f"{prefix}-{suffix[:3]}.{suffix[3:]}"
-        else:
-            display_text = clean_text
+        # Display text - GIỮ NGUYÊN text từ OCR (KHÔNG TỰ FORMAT)
+        display_text = text.upper()
 
         return clean_text, display_text
 
@@ -65,9 +55,11 @@ class ParkingManager:
         plate_id, display_text = self.validate_plate(plate_text)
 
         if not plate_id:
+            clean_attempt = re.sub(r'[^A-Z0-9]', '', plate_text.upper()) if plate_text else None
+            print(f"❌ Validate plate failed: '{plate_text}' (after clean: '{clean_attempt}')")
             return {
                 "success": False,
-                "error": "Biển số không hợp lệ"
+                "error": f"Biển số không hợp lệ: {plate_text}"
             }
 
         if camera_type == "ENTRY":
@@ -110,7 +102,6 @@ class ParkingManager:
             status="IN"
         )
 
-        print(f"✅ [{camera_name}] Xe {display_text} VÀO (ID: {entry_id})")
 
         return {
             "success": True,
@@ -148,7 +139,6 @@ class ParkingManager:
             fee=fee
         )
 
-        print(f"✅ [{camera_name}] Xe {display_text} RA. Phí: {fee:,}đ")
 
         return {
             "success": True,

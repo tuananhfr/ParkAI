@@ -1,20 +1,26 @@
 # ==================== CONFIG - OPTIMAL FOR SMOOTH VIDEO ====================
+# Plate detection model (IMX500)
 MODEL_PATH = "/home/phamt/Desktop/best_bienso_imx_model/model_out/best_bienso_rpk/network.rpk"
 LABELS_PATH = "/home/phamt/Desktop/best_bienso_imx_model/model_out/best_bienso_rpk/labels.txt"
 
-# Camera settings - LOWER RESOLUTION FOR SPEED
-RESOLUTION_WIDTH = 640
-RESOLUTION_HEIGHT = 480
-CAMERA_FPS = 30
+# OCR model labels (nếu ONNX không có embedded names)
+OCR_LABELS_PATH = "/home/phamt/Desktop/parkAI/backend/models/ocr_labels.txt"  # Path to OCR labels
 
-# Detection settings - GIẢM FPS để tránh lag OCR
-DETECTION_FPS = 15  # Giảm xuống 15 để OCR không overload Pi 5
-DETECTION_THRESHOLD = 0.3  # Giảm để test (was 0.55)
+# Camera settings - nâng lên 720p để stream rõ nét hơn
+RESOLUTION_WIDTH = 1280
+RESOLUTION_HEIGHT = 720
+CAMERA_FPS = 30  # Giữ 30fps, Pi 5 + IMX500 vẫn đáp ứng tốt ở 720p
+
+# Detection settings - Tối ưu cho DEV MODE (200 ảnh calibration)
+DETECTION_FPS = 18  # tăng nhẹ để phù hợp với fps cao hơn, vẫn tránh quá tải OCR
+DETECTION_THRESHOLD = 0.50  # Thấp hơn cho dev mode - model INT8 với 200 ảnh
 IOU_THRESHOLD = 0.65
 MAX_DETECTIONS = 10
 
-# Aspect ratio filter - Biển số phải nằm ngang
-MIN_PLATE_ASPECT_RATIO = 1.5  # width/height > 1.5 (biển số VN: 2.0-4.5)
+# Aspect ratio filter - Accept cả biển 1 dòng & 2 dòng
+# - Biển 1 dòng: aspect ~3.0-4.5 (rất ngang)
+# - Biển 2 dòng: aspect ~1.2-2.0 (hơi ngang)
+MIN_PLATE_ASPECT_RATIO = 1.0  # Accept boxes có width >= height (không dọc)
 
 # Visual settings
 BOX_COLOR = (0, 255, 0)
@@ -30,19 +36,39 @@ COLOR_MODE = 'single'
 MAX_FRAME_QUEUE_SIZE = 1  # Drop frames aggressively - chỉ giữ latest
 MAX_DETECTION_QUEUE_SIZE = 1  # Chỉ metadata, không cần buffer nhiều
 
-# OCR settings - CHỈ DÙNG TFLite hoặc ONNX (KHÔNG dùng PaddleOCR vì quá chậm)
-ENABLE_OCR = True  # BẬT OCR để nhận diện text biển số
-OCR_TYPE = "tflite"  # Chọn: "tflite" (fastest) hoặc "onnx" (fast alternative)
-OCR_CONFIDENCE_THRESHOLD = 0.3  # Minimum confidence để accept OCR result
-OCR_FRAME_SKIP = 10  # Chạy OCR mỗi N frames (10 = mỗi ~0.7s với 15 FPS detection)
+# OCR settings - Tối ưu độ chính xác với Voting
+ENABLE_OCR = True
+OCR_CONFIDENCE_THRESHOLD = 0.25  # YOLO OCR confidence
+OCR_FRAME_SKIP = 1  # Chạy OCR mỗi frame (giảm từ 2 để có nhiều votes hơn, đọc nhanh hơn)
 
-# TFLite OCR model (RECOMMENDED - fastest cho Pi 5, ~30-50ms)
-TFLITE_OCR_MODEL_PATH = None  # ví dụ: "backend/models/plate_ocr.tflite"
-# Set to None nếu chưa có model → OCR sẽ BỊ TẮT (detect plate nhưng không đọc text)
+# ==================== TRIGGER-BASED APPROACH (Production for Pi) ====================
+# Capture ảnh tĩnh khi confidence cao, OCR 1-2 lần, tiết kiệm CPU
 
-# ONNX OCR model (Alternative fast option, ~50-100ms)
-ONNX_OCR_MODEL_PATH = "/home/phamt/Desktop/parkAI/backend/models/ocr.onnx"  # ví dụ: "backend/models/plate_ocr.onnx"
-# Nếu cả TFLite và ONNX đều None → OCR sẽ BỊ TẮT
+# Capture settings
+CAPTURE_CONFIDENCE_THRESHOLD = 0.60  # Confidence để capture ảnh (dev mode: 0.6)
+MAX_OCR_ATTEMPTS = 2                 # OCR tối đa 2 lần trên ảnh đã capture
+CAPTURE_TIMEOUT = 3.0                # Reset sau 3s nếu không có kết quả
+CAPTURE_COOLDOWN = 2.0               # Chờ 2s sau khi xử lý xong mới capture tiếp
+
+# Plate image settings - Gửi ảnh đã capture về frontend
+PLATE_IMAGE_MIN_CONFIDENCE = 0.55  # Gửi ảnh khi capture (thấp hơn CAPTURE_THRESHOLD 1 chút)
+
+# ==================== VOTING CONFIG - DEV MODE (200 ảnh calibration) ====================
+# Real-time OCR + Voting để bù đắp confidence thấp
+
+# Quick Open: Tắt cho dev mode - confidence hiếm khi đạt 0.9
+QUICK_OPEN_ENABLED = False     # ❌ TẮT - model 200 ảnh hiếm khi đạt 0.9
+QUICK_OPEN_CONFIDENCE = 0.90
+QUICK_OPEN_MIN_LENGTH = 8
+
+# Voting: Dùng nhiều để bù đắp confidence thấp
+PLATE_VOTE_WINDOW = 1.2       # Tăng lên 1.2s để có nhiều votes hơn (dev mode)
+PLATE_MIN_VOTES = 2           # Cần 2 votes giống nhau
+PLATE_SIMILARITY_THRESHOLD = 0.85  # 85% giống nhau mới group
+EARLY_STOP_ENABLED = True     # ✅ BẬT - Stop ngay khi đủ 2 votes
+
+# ONNX OCR model (YOLO tự load class names)
+ONNX_OCR_MODEL_PATH = "/home/phamt/Desktop/parkAI/backend/models/ocr.onnx"
 
 # Server settings
 SERVER_HOST = "0.0.0.0"
@@ -50,9 +76,10 @@ SERVER_PORT = 5000
 
 # ==================== CAMERA IDENTIFICATION (MULTI-CAMERA SUPPORT) ====================
 CAMERA_ID = 1  # Unique ID cho mỗi camera (1, 2, 3, ...)
-CAMERA_NAME = "Cổng vào A"  # Tên hiển thị
+CAMERA_NAME = "Cổng A"  # Tên hiển thị
 CAMERA_TYPE = "ENTRY"  # "ENTRY" (vào) | "EXIT" (ra)
 CAMERA_LOCATION = "Gate A"  # Vị trí
+GATE = 1  # Gate number (1-10)
 
 # ==================== DATABASE ====================
 # SQLite database file (local trên mỗi camera)
@@ -68,5 +95,27 @@ BARRIER_AUTO_CLOSE_TIME = 5.0  # Tự động đóng sau 5 giây
 
 # ==================== CENTRAL SERVER (để sync data) ====================
 CENTRAL_SERVER_URL = "http://192.168.0.144:8000"  # Server tổng
+CENTRAL_WS_URL = "ws://192.168.0.144:8000/ws/edge/edge1"  # WebSocket URL
 CENTRAL_SYNC_ENABLED = True  # Bật sync lên central server
+
+# ==================== OFFLINE MODE & FALLBACK ====================
+# Offline exit strategy khi Central down + xe không có trong cache
+# Choices: "ALLOW_FREE", "ALLOW_DEFAULT_FEE", "BLOCK", "QUERY_BACKUP"
+OFFLINE_EXIT_STRATEGY = "ALLOW_DEFAULT_FEE"
+
+# Default fee khi không tìm thấy entry record (offline mode)
+DEFAULT_EXIT_FEE = 50000  # 50,000 VND
+
+# Backup Central URLs để query khi Central chính down (QUERY_BACKUP strategy)
+BACKUP_CENTRAL_URLS = [
+    # "http://192.168.0.141:8001",  # Central Gate 1
+    # "http://192.168.0.142:8002",  # Central Gate 2
+]
+
+# Offline queue database
+OFFLINE_QUEUE_DB = "data/offline_queue.db"
+
+# Vehicle cache database
+VEHICLE_CACHE_DB = "data/edge_cache.db"
+
 # ===========================================================================

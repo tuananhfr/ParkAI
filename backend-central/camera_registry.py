@@ -26,7 +26,6 @@ class CameraRegistry:
         self.check_thread = threading.Thread(target=self._check_offline_loop, daemon=True)
         self.check_thread.start()
 
-        print("✅ Camera registry started")
 
     def stop(self):
         """Stop monitoring"""
@@ -73,7 +72,6 @@ class CameraRegistry:
                         events_sent=camera['events_sent'],
                         events_failed=camera['events_failed']
                     )
-                    print(f"⚠️  Camera {camera['id']} ({camera['name']}) marked as OFFLINE")
 
     def get_camera_status(self):
         """Get status of all cameras"""

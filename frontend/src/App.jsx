@@ -9,20 +9,40 @@ const HistoryPanel = ({ backendUrl }) => {
   const [history, setHistory] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("all"); // all | today | in | out
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [offset, setOffset] = useState(0);
+  const [filter, setFilter] = useState("all"); // all | today | in | out | in_parking
+  const [searchText, setSearchText] = useState(""); // Tìm kiếm biển số
 
-  const fetchHistory = async () => {
+  const fetchHistory = async (isLoadMore = false) => {
     try {
-      setLoading(true);
+      if (isLoadMore) {
+        setLoadingMore(true);
+      } else {
+        setLoading(true);
+        setOffset(0);
+        setHasMore(true);
+      }
+
+      const currentOffset = isLoadMore ? offset : 0;
       const params = new URLSearchParams();
       params.append("limit", "50");
+      params.append("offset", currentOffset.toString());
 
       if (filter === "today") {
         params.append("today_only", "true");
       } else if (filter === "in") {
         params.append("status", "IN");
+      } else if (filter === "in_parking") {
+        params.append("status", "IN");
       } else if (filter === "out") {
         params.append("status", "OUT");
+      }
+
+      // Thêm search parameter nếu có
+      if (searchText.trim()) {
+        params.append("search", searchText.trim());
       }
 
       const response = await fetch(
@@ -31,81 +51,89 @@ const HistoryPanel = ({ backendUrl }) => {
       const data = await response.json();
 
       if (data.success) {
-        setHistory(data.history);
+        if (isLoadMore) {
+          // Append new data
+          setHistory((prev) => [...prev, ...data.history]);
+          setOffset(currentOffset + data.history.length);
+        } else {
+          // Replace data
+          setHistory(data.history);
+          setOffset(data.history.length);
+        }
         setStats(data.stats);
+
+        // Check if there are more records
+        setHasMore(data.history.length === 50);
       }
     } catch (err) {
-      console.error("Failed to fetch history:", err);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   };
 
   useEffect(() => {
-    fetchHistory();
-    const interval = setInterval(fetchHistory, 10000); // Refresh mỗi 10s
-    return () => clearInterval(interval);
-  }, [filter]);
+    // Load lần đầu hoặc khi filter/search thay đổi
+    const timeoutId = setTimeout(() => {
+      fetchHistory();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [filter, searchText]);
+
+  // WebSocket for real-time updates
+  useEffect(() => {
+    const wsUrl = backendUrl.replace('http', 'ws') + '/ws/history';
+    let ws = null;
+    let reconnectTimer = null;
+
+    const connect = () => {
+      try {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          console.log('[History] WebSocket connected');
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            if (message.type === 'history_update') {
+              // Fetch latest entry from database
+              fetchHistory();
+            }
+          } catch (err) {
+            console.error('[History] WebSocket message error:', err);
+          }
+        };
+
+        ws.onclose = () => {
+          console.log('[History] WebSocket disconnected, reconnecting...');
+          reconnectTimer = setTimeout(connect, 3000);
+        };
+
+        ws.onerror = (err) => {
+          console.error('[History] WebSocket error:', err);
+        };
+      } catch (err) {
+        console.error('[History] WebSocket connection error:', err);
+      }
+    };
+
+    connect();
+
+    return () => {
+      if (ws) {
+        ws.close();
+      }
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+    };
+  }, [backendUrl]);
 
   return (
     <div className="card shadow-sm h-100">
-      {/* Header */}
-      <div className="card-header bg-dark text-white py-2 px-3">
-        <div className="d-flex justify-content-between align-items-center">
-          <h6 className="mb-0">
-            <i className="bi bi-clock-history me-1"></i>
-            Lịch sử
-          </h6>
-          <button
-            className="btn btn-sm btn-outline-light"
-            onClick={fetchHistory}
-            disabled={loading}
-          >
-            <i className={`bi bi-arrow-clockwise ${loading ? "spin" : ""}`}></i>
-          </button>
-        </div>
-      </div>
-
-      {/* Stats */}
-      {stats && (
-        <div className="card-body p-2 bg-light border-bottom">
-          <div className="row g-2 text-center small">
-            <div className="col">
-              <div className="fw-bold text-success">
-                {stats.entries_today || 0}
-              </div>
-              <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                VÀO
-              </div>
-            </div>
-            <div className="col">
-              <div className="fw-bold text-danger">
-                {stats.exits_today || 0}
-              </div>
-              <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                RA
-              </div>
-            </div>
-            <div className="col">
-              <div className="fw-bold text-warning">
-                {stats.vehicles_in_parking || 0}
-              </div>
-              <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                Trong bãi
-              </div>
-            </div>
-            <div className="col">
-              <div className="fw-bold text-primary">
-                {((stats.revenue_today || 0) / 1000).toFixed(0)}K
-              </div>
-              <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                Thu
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Filter */}
       <div className="px-2 pt-2">
         <div className="btn-group btn-group-sm w-100" role="group">
@@ -127,6 +155,15 @@ const HistoryPanel = ({ backendUrl }) => {
           </button>
           <button
             className={`btn ${
+              filter === "in_parking" ? "btn-info" : "btn-outline-info"
+            }`}
+            onClick={() => setFilter("in_parking")}
+          >
+            <i className="bi bi-car-front-fill me-1"></i>
+            Trong bãi
+          </button>
+          <button
+            className={`btn ${
               filter === "in" ? "btn-success" : "btn-outline-success"
             }`}
             onClick={() => setFilter("in")}
@@ -142,6 +179,31 @@ const HistoryPanel = ({ backendUrl }) => {
             RA
           </button>
         </div>
+
+        {/* Tìm kiếm biển số */}
+        <div className="mt-2">
+          <div className="input-group input-group-sm">
+            <span className="input-group-text">
+              <i className="bi bi-search"></i>
+            </span>
+            <input
+              type="text"
+              className="form-control"
+              placeholder="Tìm kiếm biển số..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+            {searchText && (
+              <button
+                className="btn btn-outline-secondary"
+                type="button"
+                onClick={() => setSearchText("")}
+              >
+                <i className="bi bi-x"></i>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* History List */}
@@ -153,70 +215,154 @@ const HistoryPanel = ({ backendUrl }) => {
         ) : history.length === 0 ? (
           <div className="text-center text-muted py-4 small">
             <i className="bi bi-inbox"></i>
-            <div>Chưa có dữ liệu</div>
+            <div>
+              {searchText ? "Không tìm thấy kết quả" : "Chưa có dữ liệu"}
+            </div>
           </div>
         ) : (
-          <div className="list-group list-group-flush">
-            {history.map((entry) => (
-              <div key={entry.id} className="list-group-item p-2 small">
-                <div className="d-flex justify-content-between align-items-start">
-                  <div>
-                    <div className="fw-bold text-primary">
-                      {entry.plate_view}
-                    </div>
-                    <div className="text-muted" style={{ fontSize: "0.7rem" }}>
-                      <i className="bi bi-arrow-down-circle text-success me-1"></i>
-                      {entry.entry_time}
-                      {entry.entry_camera_name && (
-                        <span className="ms-1">
-                          ({entry.entry_camera_name})
+          <>
+            <div className="list-group list-group-flush">
+              {history.map((entry) => (
+                <div key={entry.id} className="list-group-item p-2 border-bottom">
+                  <div className="row g-1">
+                    {/* Thông tin chính */}
+                    <div className="col flex-grow-1">
+                      {/* Biển số */}
+                      <div className="mb-2">
+                        <div
+                          className="fw-bold text-primary"
+                          style={{ fontSize: "1rem" }}
+                        >
+                          <i className="bi bi-123 me-1"></i>
+                          {entry.plate_view || entry.plate_id}
+                        </div>
+                      </div>
+
+                      {/* Giờ vào/ra */}
+                      <div className="mb-1">
+                        <div
+                          className="text-muted mb-1"
+                          style={{ fontSize: "0.7rem" }}
+                        >
+                          <i
+                            className="bi bi-arrow-down-circle text-success me-1"
+                            style={{ fontSize: "0.65rem" }}
+                          ></i>
+                          Vào: {entry.entry_time || "N/A"}
+                          {entry.entry_camera_name && (
+                            <span className="ms-1">
+                              ({entry.entry_camera_name})
+                            </span>
+                          )}
+                        </div>
+                        {entry.exit_time ? (
+                          <div
+                            className="text-muted"
+                            style={{ fontSize: "0.7rem" }}
+                          >
+                            <i
+                              className="bi bi-arrow-up-circle text-danger me-1"
+                              style={{ fontSize: "0.65rem" }}
+                            ></i>
+                            Ra: {entry.exit_time}
+                            {entry.exit_camera_name && (
+                              <span className="ms-1">
+                                ({entry.exit_camera_name})
+                              </span>
+                            )}
+                          </div>
+                        ) : entry.status === "IN" ? (
+                          <div
+                            className="text-muted"
+                            style={{ fontSize: "0.7rem" }}
+                          >
+                            <i
+                              className="bi bi-clock text-info me-1"
+                              style={{ fontSize: "0.65rem" }}
+                            ></i>
+                            Ra: Đang trong bãi
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {/* Loại khách */}
+                      <div className="mb-1">
+                        <span className="badge bg-info">
+                          <i className="bi bi-person-fill me-1"></i>
+                          {entry.customer_type ||
+                            entry.vehicle_type ||
+                            "Khách lẻ"}
                         </span>
-                      )}
+                      </div>
                     </div>
-                    {entry.exit_time && (
-                      <div
-                        className="text-muted"
-                        style={{ fontSize: "0.7rem" }}
-                      >
-                        <i className="bi bi-arrow-up-circle text-danger me-1"></i>
-                        {entry.exit_time}
-                        {entry.exit_camera_name && (
-                          <span className="ms-1">
-                            ({entry.exit_camera_name})
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-end">
-                    <span
-                      className={`badge ${
-                        entry.status === "IN" ? "bg-success" : "bg-secondary"
-                      }`}
-                    >
-                      {entry.status}
-                    </span>
-                    {entry.duration && (
-                      <div
-                        className="text-muted mt-1"
-                        style={{ fontSize: "0.7rem" }}
-                      >
-                        {entry.duration}
-                      </div>
-                    )}
-                    {entry.fee > 0 && (
-                      <div
-                        className="fw-bold text-success mt-1"
+
+                    {/* Cột phải: Giá vé và trạng thái */}
+                    <div className="col-auto text-end">
+                      <span
+                        className={`badge ${
+                          entry.status === "IN" ? "bg-success" : "bg-secondary"
+                        } mb-2`}
                         style={{ fontSize: "0.75rem" }}
                       >
-                        {entry.fee.toLocaleString("vi-VN")}đ
+                        {entry.status === "IN" ? "ĐANG TRONG BÃI" : "ĐÃ RA"}
+                      </span>
+
+                      {/* Giá vé */}
+                      <div className="mt-2">
+                        <div>
+                          <div className="text-muted small">Giá vé:</div>
+                          <div
+                            className={
+                              entry.fee > 0
+                                ? "fw-bold text-success"
+                                : "text-muted"
+                            }
+                            style={{
+                              fontSize: entry.fee > 0 ? "1rem" : "0.875rem",
+                            }}
+                          >
+                            {(entry.fee || 0).toLocaleString("vi-VN")}
+                            <strong>đ</strong>
+                          </div>
+                        </div>
                       </div>
-                    )}
+
+                      {/* Thời gian (nếu có) */}
+                      {entry.duration && (
+                        <div className="text-muted small mt-1">
+                          <i className="bi bi-clock me-1"></i>
+                          {entry.duration}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
+              ))}
+            </div>
+
+            {/* Load More Button */}
+            {hasMore && (
+              <div className="text-center py-3">
+                <button
+                  className="btn btn-outline-primary btn-sm"
+                  onClick={() => fetchHistory(true)}
+                  disabled={loadingMore}
+                >
+                  {loadingMore ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2"></span>
+                      Đang tải...
+                    </>
+                  ) : (
+                    <>
+                      <i className="bi bi-arrow-down-circle me-2"></i>
+                      Xem thêm
+                    </>
+                  )}
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -228,11 +374,17 @@ function App() {
   const [cameras, setCameras] = useState([]);
   const [historyKey, setHistoryKey] = useState(0);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [stats, setStats] = useState(null);
 
   useEffect(() => {
     fetchCameras();
+    fetchStats();
     const interval = setInterval(fetchCameras, 5000);
-    return () => clearInterval(interval);
+    const statsInterval = setInterval(fetchStats, 10000);
+    return () => {
+      clearInterval(interval);
+      clearInterval(statsInterval);
+    };
   }, []);
 
   const fetchCameras = async () => {
@@ -242,9 +394,19 @@ function App() {
       if (data.success) {
         setCameras(data.cameras);
       }
-    } catch (err) {
-      console.error("Failed to fetch cameras:", err);
-    }
+    } catch (err) {}
+  };
+
+  const fetchStats = async () => {
+    try {
+      const response = await fetch(
+        `${CENTRAL_URL}/api/parking/history?limit=1`
+      );
+      const data = await response.json();
+      if (data.success && data.stats) {
+        setStats(data.stats);
+      }
+    } catch (err) {}
   };
 
   const handleHistoryUpdate = () => {
@@ -256,14 +418,107 @@ function App() {
       className="d-flex flex-column"
       style={{ width: "100vw", height: "100vh", overflow: "hidden" }}
     >
-      <div className="bg-primary text-white p-2 d-flex justify-content-between align-items-center">
-        <h5 className="mb-0">
-          <i className="bi bi-camera-video-fill me-2"></i>
-          Hệ thống quản lý bãi xe
-        </h5>
+      <div className="bg-primary text-white py-1 px-2 d-flex justify-content-between align-items-center">
+        {stats && (
+          <div className="row g-1 text-center flex-grow-1 me-2">
+            <div className="col">
+              <div
+                className="fw-bold text-white"
+                style={{
+                  fontSize: "1rem",
+                  lineHeight: "1.2",
+                }}
+              >
+                {stats.entries_today || 0}
+              </div>
+              <div
+                className="text-white-50"
+                style={{ fontSize: "0.7rem", lineHeight: "1" }}
+              >
+                VÀO
+              </div>
+            </div>
+            <div className="col position-relative">
+              <div
+                className="position-absolute start-0 top-0 bottom-0"
+                style={{
+                  width: "1px",
+                  backgroundColor: "rgba(255, 255, 255, 0.25)",
+                }}
+              ></div>
+              <div
+                className="fw-bold text-white"
+                style={{
+                  fontSize: "1rem",
+                  lineHeight: "1.2",
+                }}
+              >
+                {stats.exits_today || 0}
+              </div>
+              <div
+                className="text-white-50"
+                style={{ fontSize: "0.7rem", lineHeight: "1" }}
+              >
+                RA
+              </div>
+            </div>
+            <div className="col position-relative">
+              <div
+                className="position-absolute start-0 top-0 bottom-0"
+                style={{
+                  width: "1px",
+                  backgroundColor: "rgba(255, 255, 255, 0.25)",
+                }}
+              ></div>
+              <div
+                className="fw-bold text-white"
+                style={{
+                  fontSize: "1rem",
+                  lineHeight: "1.2",
+                }}
+              >
+                {stats.vehicles_in_parking || 0}
+              </div>
+              <div
+                className="text-white-50"
+                style={{ fontSize: "0.7rem", lineHeight: "1" }}
+              >
+                Trong bãi
+              </div>
+            </div>
+            <div className="col position-relative">
+              <div
+                className="position-absolute start-0 top-0 bottom-0"
+                style={{
+                  width: "1px",
+                  backgroundColor: "rgba(255, 255, 255, 0.25)",
+                }}
+              ></div>
+              <div
+                className="fw-bold text-white"
+                style={{
+                  fontSize: "1rem",
+                  lineHeight: "1.2",
+                }}
+              >
+                {((stats.revenue_today || 0) / 1000).toFixed(0)}K
+              </div>
+              <div
+                className="text-white-50"
+                style={{ fontSize: "0.7rem", lineHeight: "1" }}
+              >
+                Thu
+              </div>
+            </div>
+          </div>
+        )}
         <button
           className="btn btn-light btn-sm"
           onClick={() => setShowHistoryModal(true)}
+          style={{
+            padding: "0.25rem 0.5rem",
+            fontSize: "0.75rem",
+          }}
         >
           <i className="bi bi-clock-history me-1"></i>
           Xem lịch sử
@@ -279,7 +534,7 @@ function App() {
             </div>
           ) : (
             cameras.map((camera) => (
-              <div key={camera.id} className="col-12 col-md-6 col-lg-4 h-100">
+              <div key={camera.id} className="col-12 col-md-6 col-lg-3 h-100">
                 <CameraView
                   camera={camera}
                   onHistoryUpdate={handleHistoryUpdate}

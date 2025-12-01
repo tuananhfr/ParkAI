@@ -1,0 +1,8 @@
+# Additional dependencies for Offline Mode
+# Thêm vào requirements.txt hiện tại
+
+# HTTP client với async support
+httpx==0.27.0
+
+# WebSocket client
+websockets==12.0

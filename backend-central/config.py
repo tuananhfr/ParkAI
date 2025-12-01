@@ -27,7 +27,7 @@ FEE_DAILY_MAX = 100000  # 100k tối đa 1 ngày
 # Điền URL thực tế thông qua biến môi trường (khuyến nghị) hoặc chỉnh trực tiếp.
 EDGE_CAMERAS = {
     1: {
-        "name": "Cổng vào A",
+        "name": "Cổng A",
         "base_url": os.getenv("EDGE1_URL", "http://192.168.0.144:5000"),
         "ws_url": os.getenv(
             "EDGE1_WS_URL", "ws://192.168.0.144:5000/ws/detections"

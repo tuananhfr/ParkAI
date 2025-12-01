@@ -3,12 +3,14 @@ Main FastAPI Application
 """
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 import uvicorn
 import asyncio
 import numpy as np
+import os
+from pathlib import Path
 
 import config
 from camera_manager import CameraManager
@@ -41,6 +43,50 @@ central_sync = None
 
 # WebRTC
 pcs = set()
+
+
+def _suppress_stun_errors(loop, context):
+    """
+    Suppress các InvalidStateError từ STUN transactions
+    Đây là bug đã biết trong aioice - các STUN transactions vẫn chạy sau khi connection đã close
+    Không ảnh hưởng đến functionality, chỉ là warning
+    """
+    exception = context.get('exception')
+    message = context.get('message', '')
+    source_traceback = str(context.get('source_traceback', ''))
+    
+    # Ignore InvalidStateError từ STUN transaction retries
+    if exception and isinstance(exception, asyncio.InvalidStateError):
+        if 'Transaction.__retry' in message or 'stun' in message.lower() or 'Transaction.__retry' in source_traceback:
+            return  # Suppress lỗi này
+    
+    # In các lỗi khác như bình thường
+    default_handler = loop.get_exception_handler()
+    if default_handler and default_handler != _suppress_stun_errors:
+        default_handler(loop, context)
+    else:
+        # Fallback: in ra console nếu không có handler mặc định
+        if exception:
+            import traceback
+            traceback.print_exception(type(exception), exception, exception.__traceback__)
+
+
+async def safe_close_pc(pc):
+    """
+    Cleanup peer connection một cách an toàn
+    Đợi một chút để STUN transactions có thời gian dừng trước khi close
+    """
+    if pc is None:
+        return
+    try:
+        # Đợi một chút để STUN transactions có thời gian dừng
+        await asyncio.sleep(0.1)
+        await pc.close()
+    except Exception:
+        # Ignore tất cả errors khi cleanup - có thể là STUN transaction đã bị cancel
+        pass
+    finally:
+        pcs.discard(pc)
 
 
 def _ocr_state():
@@ -136,6 +182,9 @@ class AnnotatedVideoTrack(VideoStreamTrack):
 # ==================== Startup & Shutdown ====================
 @app.on_event("startup")
 async def startup():
+    # Suppress STUN transaction InvalidStateError warnings
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(_suppress_stun_errors)
     global camera_manager, detection_service, ocr_service, parking_manager, barrier_controller, central_sync
     
     try:
@@ -149,35 +198,25 @@ async def startup():
         
         # Initialize OCR
         if config.ENABLE_OCR:
-            print("🔍 Initializing OCR service...")
             ocr_service = OCRService()
-            if ocr_service.is_ready():
+            if not ocr_service.is_ready():
                 status = ocr_service.get_status()
-                print(f"✅ OCR ready: {status['type']} ({status['provider']})")
-            else:
-                status = ocr_service.get_status()
-                print(f"❌ OCR failed: {status['error']}")
         else:
-            print("⚠️  OCR disabled in config")
             ocr_service = None
         
         # Initialize parking manager
-        print("💾 Initializing parking manager...")
         parking_manager = ParkingManager(db_file=config.DB_FILE)
-        print(f"✅ Parking manager ready")
 
         # Initialize barrier controller
-        print("🚪 Initializing barrier controller...")
         barrier_controller = BarrierController(
             enabled=config.BARRIER_ENABLED,
             gpio_pin=config.BARRIER_GPIO_PIN,
-            auto_close_time=config.BARRIER_AUTO_CLOSE_TIME
+            auto_close_time=config.BARRIER_AUTO_CLOSE_TIME,
+            websocket_manager=websocket_manager  # Push status changes qua WebSocket
         )
-        print(f"✅ Barrier controller ready")
 
         # Initialize central sync service
         if config.CENTRAL_SYNC_ENABLED:
-            print("🌐 Initializing central sync service...")
             central_sync = CentralSyncService(
                 central_url=config.CENTRAL_SERVER_URL,
                 camera_id=config.CAMERA_ID,
@@ -185,20 +224,21 @@ async def startup():
                 camera_type=config.CAMERA_TYPE
             )
             central_sync.start()
-            print(f"✅ Central sync ready (URL: {config.CENTRAL_SERVER_URL})")
         else:
-            print("⚠️  Central sync disabled")
+            central_sync = None
 
-        # Initialize detection service
+        # Initialize detection service (với central_sync, barrier_controller, parking_manager)
         detection_service = DetectionService(
             camera_manager,
             websocket_manager,
-            ocr_service
+            ocr_service,
+            central_sync,  # ← Pass central_sync để gửi ảnh lên Central
+            barrier_controller,  # ← Pass barrier_controller để mở/đóng barrier
+            parking_manager  # ← Pass parking_manager để process entry tự động
         )
         detection_service.start()
 
     except Exception as e:
-        print(f"❌ Startup failed: {e}")
         import traceback
         traceback.print_exc()
 
@@ -215,8 +255,9 @@ async def shutdown():
     if barrier_controller:
         barrier_controller.cleanup()
 
-    coros = [pc.close() for pc in pcs]
-    await asyncio.gather(*coros)
+    # Cleanup tất cả peer connections
+    coros = [safe_close_pc(pc) for pc in list(pcs)]
+    await asyncio.gather(*coros, return_exceptions=True)
     pcs.clear()
     
 
@@ -252,6 +293,7 @@ async def webrtc_offer(request: Request):
     """WebRTC offer endpoint"""
     global camera_manager
     
+    pc = None
     try:
         if camera_manager is None:
             return JSONResponse({"error": "Camera not ready"}, status_code=500)
@@ -265,8 +307,7 @@ async def webrtc_offer(request: Request):
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
             if pc.connectionState in ["failed", "closed"]:
-                await pc.close()
-                pcs.discard(pc)
+                await safe_close_pc(pc)
 
         camera_track = CameraVideoTrack(camera_manager)
         pc.addTrack(camera_track)
@@ -281,9 +322,10 @@ async def webrtc_offer(request: Request):
         })
         
     except Exception as e:
-        print(f"❌ WebRTC error: {e}")
         import traceback
         traceback.print_exc()
+        # Cleanup peer connection nếu có lỗi
+        await safe_close_pc(pc)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -292,6 +334,7 @@ async def webrtc_offer_annotated(request: Request):
     """WebRTC offer endpoint cho ANNOTATED video (có boxes vẽ sẵn từ backend)"""
     global camera_manager
 
+    pc = None
     try:
         if camera_manager is None:
             return JSONResponse({"error": "Camera not ready"}, status_code=500)
@@ -305,8 +348,7 @@ async def webrtc_offer_annotated(request: Request):
         @pc.on("connectionstatechange")
         async def on_connectionstatechange():
             if pc.connectionState in ["failed", "closed"]:
-                await pc.close()
-                pcs.discard(pc)
+                await safe_close_pc(pc)
 
         # SỬ DỤNG AnnotatedVideoTrack thay vì CameraVideoTrack
         annotated_track = AnnotatedVideoTrack(camera_manager)
@@ -322,9 +364,10 @@ async def webrtc_offer_annotated(request: Request):
         })
 
     except Exception as e:
-        print(f"❌ WebRTC (ANNOTATED) error: {e}")
         import traceback
         traceback.print_exc()
+        # Cleanup peer connection nếu có lỗi
+        await safe_close_pc(pc)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 # ==================== WebSocket Route ====================
@@ -354,7 +397,6 @@ async def websocket_detections(websocket: WebSocket):
     except WebSocketDisconnect:
         websocket_manager.disconnect(websocket)
     except Exception as e:
-        print(f"❌ WebSocket error: {e}")
         websocket_manager.disconnect(websocket)
 
 
@@ -363,7 +405,7 @@ async def websocket_detections(websocket: WebSocket):
 @app.post("/api/open-barrier")
 async def open_barrier(request: Request):
     """
-    User nhấn nút mở cửa
+    User nhấn nút mở cửa - CHỈ MỞ BARRIER, KHÔNG LƯU DB
 
     Body: {
         "plate_text": "30G56789",
@@ -371,7 +413,7 @@ async def open_barrier(request: Request):
         "source": "auto" | "manual"
     }
     """
-    global parking_manager, barrier_controller, central_sync
+    global barrier_controller
 
     try:
         data = await request.json()
@@ -386,38 +428,48 @@ async def open_barrier(request: Request):
                 "error": "Biển số không được để trống"
             }, status_code=400)
 
-        # Process entry với config của camera này
-        result = parking_manager.process_entry(
-            plate_text=plate_text,
-            camera_id=config.CAMERA_ID,
-            camera_type=config.CAMERA_TYPE,
-            camera_name=config.CAMERA_NAME,
-            confidence=confidence,
-            source=source
-        )
+        # ========== VALIDATE BIỂN SỐ TRƯỚC KHI MỞ BARRIER ==========
+        # Validate format
+        plate_id, display_text = parking_manager.validate_plate(plate_text)
+        if not plate_id:
+            return JSONResponse({
+                "success": False,
+                "error": f"Biển số không hợp lệ: {plate_text}"
+            }, status_code=400)
+        
+        # Check trong DB theo logic cổng VÀO/RA
+        existing = parking_manager.db.find_entry_in(plate_id)
+        
+        if config.CAMERA_TYPE == "ENTRY":
+            # Cổng VÀO: Xe chưa có trong gara → valid
+            if existing:
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Xe {display_text} đã VÀO lúc {existing['entry_time']} tại {existing['entry_camera_name']}"
+                }, status_code=400)
+        elif config.CAMERA_TYPE == "EXIT":
+            # Cổng RA: Xe đã có trong gara → valid
+            if not existing:
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Xe {display_text} không có trong gara!"
+                }, status_code=400)
 
-        if not result['success']:
-            return JSONResponse(result, status_code=400)
-
-        # Mở barrier
-        if barrier_controller and config.BARRIER_ENABLED:
-            barrier_controller.open_barrier()
-
-        # Sync to central server
-        if central_sync:
-            event_type = "ENTRY" if config.CAMERA_TYPE == "ENTRY" else "EXIT"
-            central_sync.send_event(event_type, {
-                "plate_text": plate_text,
-                "plate_id": result.get('plate_id'),
-                "confidence": confidence,
-                "source": source,
-                "action": result.get('action'),
-                "entry_id": result.get('entry_id')
-            })
+        # ========== FLOW ĐƠN GIẢN: CHỈ MỞ BARRIER ==========
+        # Lưu thông tin tạm thời để lưu DB khi đóng barrier
+        pending_entry = {
+            "plate_text": plate_text,
+            "confidence": confidence,
+            "source": source
+        }
+        
+        if barrier_controller:
+            barrier_controller.open_barrier(auto_close_delay=None, pending_entry=pending_entry)
 
         return JSONResponse({
-            **result,
-            "barrier_opened": config.BARRIER_ENABLED,
+            "success": True,
+            "message": f"Barrier đã mở cho xe {plate_text}",
+            "barrier_opened": True,
             "camera_info": {
                 "id": config.CAMERA_ID,
                 "name": config.CAMERA_NAME,
@@ -426,7 +478,6 @@ async def open_barrier(request: Request):
         })
 
     except Exception as e:
-        print(f"❌ Error in open_barrier: {e}")
         import traceback
         traceback.print_exc()
         return JSONResponse({
@@ -455,7 +506,6 @@ async def get_history(limit: int = 100, today_only: bool = False, status: str = 
             "history": history
         })
     except Exception as e:
-        print(f"❌ Error in get_history: {e}")
         return JSONResponse({
             "success": False,
             "error": str(e)
@@ -494,6 +544,41 @@ async def camera_info():
     })
 
 
+@app.put("/api/camera/type")
+async def update_camera_type(request: Request):
+    """Cập nhật camera type (ENTRY/EXIT)"""
+    try:
+        data = await request.json()
+        new_type = data.get("type", "").upper()
+
+        # Validate
+        if new_type not in ["ENTRY", "EXIT"]:
+            return JSONResponse({
+                "success": False,
+                "error": "Invalid type. Must be ENTRY or EXIT"
+            }, status_code=400)
+
+        # Update config
+        config.CAMERA_TYPE = new_type
+
+
+        return JSONResponse({
+            "success": True,
+            "message": f"Camera type updated to {new_type}",
+            "camera": {
+                "id": config.CAMERA_ID,
+                "name": config.CAMERA_NAME,
+                "type": config.CAMERA_TYPE,
+                "location": config.CAMERA_LOCATION
+            }
+        })
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
 @app.get("/api/barrier/status")
 async def barrier_status():
     """Trạng thái barrier"""
@@ -509,6 +594,124 @@ async def barrier_status():
             "success": False,
             "error": "Barrier controller not initialized"
         }, status_code=500)
+
+
+@app.post("/api/close-barrier")
+async def close_barrier(request: Request):
+    """
+    Đóng barrier từ frontend - ĐÓNG BARRIER VÀ LƯU DB
+    
+    Flow: Lưu DB SAU KHI barrier đóng (entry_time = thời điểm đóng)
+    """
+    global barrier_controller, parking_manager, central_sync
+
+    if not barrier_controller:
+        return JSONResponse({
+            "success": False,
+            "error": "Barrier controller not initialized"
+        }, status_code=500)
+
+    # Cho phép hoạt động ở simulation mode (BARRIER_ENABLED = False vẫn hoạt động được)
+    # barrier_controller đã có simulation mode sẵn
+
+    try:
+        # Đóng barrier và lấy pending entry (nếu có)
+        pending_entry = barrier_controller.close_barrier()
+        
+        # Nếu có pending entry → Lưu DB với entry_time = thời điểm barrier đóng
+        if pending_entry:
+            result = parking_manager.process_entry(
+                plate_text=pending_entry["plate_text"],
+                camera_id=config.CAMERA_ID,
+                camera_type=config.CAMERA_TYPE,
+                camera_name=config.CAMERA_NAME,
+                confidence=pending_entry["confidence"],
+                source=pending_entry["source"]
+            )
+            
+            if result.get('success'):
+                # Sync to Central (nếu có) - GỬI ĐẦY ĐỦ THÔNG TIN
+                if central_sync:
+                    event_type = "ENTRY" if config.CAMERA_TYPE == "ENTRY" else "EXIT"
+
+                    # Chuẩn bị data để sync
+                    sync_data = {
+                        "plate_text": pending_entry["plate_text"],
+                        "confidence": pending_entry["confidence"],
+                        "source": pending_entry["source"],
+                        "entry_id": result.get('entry_id'),  # ID từ edge DB
+                    }
+
+                    # Thêm thông tin cho ENTRY
+                    if event_type == "ENTRY":
+                        # Entry time sẽ được central tạo mới (thời điểm nhận event)
+                        pass
+
+                    # Thêm thông tin cho EXIT
+                    elif event_type == "EXIT":
+                        if result.get('entry_time'):
+                            sync_data['entry_time'] = result.get('entry_time')
+                        if result.get('duration'):
+                            sync_data['duration'] = result.get('duration')
+                        if result.get('fee') is not None:
+                            sync_data['fee'] = result.get('fee')
+
+                    central_sync.send_event(event_type, sync_data)
+
+                return JSONResponse({
+                    "success": True,
+                    "message": "Barrier đã đóng và đã lưu DB",
+                    "entry_saved": True,
+                    "entry_id": result.get('entry_id'),
+                    **barrier_controller.get_status()
+                })
+            else:
+                return JSONResponse({
+                    "success": True,
+                    "message": "Barrier đã đóng nhưng không thể lưu DB",
+                    "entry_saved": False,
+                    "entry_error": result.get('error'),
+                    **barrier_controller.get_status()
+                })
+        
+        # Không có pending entry → Chỉ đóng barrier (có thể là đóng thủ công không có xe)
+        return JSONResponse({
+            "success": True,
+            "message": "Barrier đã đóng",
+            "entry_saved": False,
+            **barrier_controller.get_status()
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/api/plate-image/{filename}")
+async def get_plate_image(filename: str):
+    """
+    Serve plate image từ file system
+
+    Frontend có thể access: http://edge-ip:5000/api/plate-image/29A12345_1732867234.jpg
+    """
+    # Security: Chỉ cho phép filename, không cho phép path traversal
+    filename = os.path.basename(filename)
+
+    # Build full path
+    filepath = os.path.join("data", "plates", filename)
+
+    # Check file exists
+    if os.path.exists(filepath) and os.path.isfile(filepath):
+        return FileResponse(filepath, media_type="image/jpeg")
+    else:
+        return JSONResponse({
+            "error": "Image not found",
+            "filename": filename
+        }, status_code=404)
 
 
 # ==================== Run Server ====================

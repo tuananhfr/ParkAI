@@ -16,7 +16,7 @@ class ParkingStateManager:
         Process event từ Edge camera
 
         Args:
-            event_type: "ENTRY" | "EXIT"
+            event_type: "ENTRY" | "EXIT" | "DETECTION"
             camera_id: Camera ID
             camera_name: Camera name
             camera_type: "ENTRY" | "EXIT"
@@ -26,12 +26,12 @@ class ParkingStateManager:
         confidence = data.get('confidence', 0.0)
         source = data.get('source', 'manual')
 
-        # Validate plate
-        plate_id, plate_view = self._validate_plate(plate_text)
+        # Normalize plate - Edge đã validate rồi, chỉ cần normalize
+        plate_id, plate_view = self._normalize_plate(plate_text)
         if not plate_id:
             return {
                 "success": False,
-                "error": f"Biển số không hợp lệ: {plate_text}"
+                "error": f"Không thể normalize biển số: {plate_text}"
             }
 
         # Log event to database
@@ -46,7 +46,7 @@ class ParkingStateManager:
             data=data
         )
 
-        if event_type == "ENTRY":
+        if event_type == "ENTRY" or event_type == "DETECTION":
             return self._process_entry(plate_id, plate_view, camera_id, camera_name, confidence, source)
         elif event_type == "EXIT":
             return self._process_exit(plate_id, plate_view, camera_id, camera_name, confidence, source)
@@ -58,6 +58,7 @@ class ParkingStateManager:
         # Check if vehicle already IN
         existing = self.db.find_vehicle_in_parking(plate_id)
         if existing:
+            # Xe đang trong bãi - không cho vào lại
             return {
                 "success": False,
                 "error": f"Xe {plate_view} đã VÀO lúc {existing['entry_time']} ({existing['entry_camera_name']})"
@@ -65,25 +66,37 @@ class ParkingStateManager:
 
         # Add entry
         entry_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        vehicle_id = self.db.add_vehicle_entry(
-            plate_id=plate_id,
-            plate_view=plate_view,
-            entry_time=entry_time,
-            camera_id=camera_id,
-            camera_name=camera_name,
-            confidence=confidence,
-            source=source
-        )
+        try:
+            vehicle_id = self.db.add_vehicle_entry(
+                plate_id=plate_id,
+                plate_view=plate_view,
+                entry_time=entry_time,
+                camera_id=camera_id,
+                camera_name=camera_name,
+                confidence=confidence,
+                source=source
+            )
 
-        return {
-            "success": True,
-            "action": "ENTRY",
-            "message": f"Xe {plate_view} VÀO bãi",
-            "plate_id": plate_id,
-            "plate_view": plate_view,
-            "vehicle_id": vehicle_id,
-            "entry_time": entry_time
-        }
+            if vehicle_id:
+                return {
+                    "success": True,
+                    "action": "ENTRY",
+                    "message": f"Xe {plate_view} VÀO bãi",
+                    "plate_id": plate_id,
+                    "plate_view": plate_view,
+                    "vehicle_id": vehicle_id,
+                    "entry_time": entry_time
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Không thể lưu xe {plate_view} vào database"
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     def _process_exit(self, plate_id, plate_view, camera_id, camera_name, confidence, source):
         """Process vehicle exit"""
@@ -123,36 +136,27 @@ class ParkingStateManager:
             "fee": fee
         }
 
-    def _validate_plate(self, text):
-        """Validate Vietnamese plate"""
-        if not text or len(text) < 6:
+    def _normalize_plate(self, text):
+        """
+        Normalize biển số - Edge đã validate rồi, chỉ cần normalize
+        
+        Chỉ cần:
+        - Clean text (bỏ ký tự đặc biệt)
+        - Giữ nguyên display text từ edge
+        """
+        if not text:
             return None, None
 
-        # Clean text
+        # Clean text - BỎ TẤT CẢ KÝ TỰ ĐẶC BIỆT (giữ số + chữ)
         clean_text = re.sub(r'[^A-Z0-9]', '', text.upper())
+        
+        if len(clean_text) < 6:  # Tối thiểu 6 ký tự
+            return None, None
 
-        # Patterns
-        patterns = [
-            r'^\d{2}[A-HJ-NP-Z]\d{4,5}$',      # 29A12345
-            r'^\d{3}[A-HJ-NP-Z]\d{4,5}$',      # 123A12345
-        ]
+        # Display text - GIỮ NGUYÊN text từ edge (không tự format)
+        plate_view = text.upper().strip()
 
-        for pattern in patterns:
-            if re.match(pattern, clean_text):
-                # Format display: 30G-123.45
-                if len(clean_text) == 8:  # 29A12345
-                    plate_view = f"{clean_text[:3]}-{clean_text[3:6]}.{clean_text[6:]}"
-                elif len(clean_text) == 9:  # 29A123456 hoặc 123A12345
-                    if clean_text[2].isalpha():
-                        plate_view = f"{clean_text[:3]}-{clean_text[3:6]}.{clean_text[6:]}"
-                    else:
-                        plate_view = f"{clean_text[:4]}-{clean_text[4:7]}.{clean_text[7:]}"
-                else:
-                    plate_view = clean_text
-
-                return clean_text, plate_view
-
-        return None, None
+        return clean_text, plate_view
 
     def _calculate_fee(self, entry_time_str, exit_time_str):
         """Calculate parking fee"""

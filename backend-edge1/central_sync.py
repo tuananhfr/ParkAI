@@ -39,7 +39,6 @@ class CentralSyncService:
         self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self.heartbeat_thread.start()
 
-        print(f"✅ Central sync service started (central: {self.central_url})")
 
     def stop(self):
         """Stop sync service"""

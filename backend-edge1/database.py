@@ -84,7 +84,6 @@ class Database:
             conn.commit()
             conn.close()
 
-            print("✅ Database initialized")
 
     def add_entry(self, plate_id, plate_view, camera_id, camera_name,
                   confidence, source, status="IN"):

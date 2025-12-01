@@ -94,18 +94,57 @@ class CentralDatabase:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO vehicles (
-                    plate_id, plate_view, entry_time, entry_camera_id, entry_camera_name,
-                    entry_confidence, entry_source, status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'IN')
-            """, (plate_id, plate_view, entry_time, camera_id, camera_name, confidence, source))
+            try:
+                cursor.execute("""
+                    INSERT INTO vehicles (
+                        plate_id, plate_view, entry_time, entry_camera_id, entry_camera_name,
+                        entry_confidence, entry_source, status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'IN')
+                """, (plate_id, plate_view, entry_time, camera_id, camera_name, confidence, source))
 
-            vehicle_id = cursor.lastrowid
-            conn.commit()
-            conn.close()
-
-            return vehicle_id
+                vehicle_id = cursor.lastrowid
+                conn.commit()
+                return vehicle_id
+            except sqlite3.IntegrityError as e:
+                # UNIQUE constraint violation - xe đã tồn tại
+                # Kiểm tra xem xe có đang trong bãi không
+                cursor.execute("""
+                    SELECT id, status FROM vehicles WHERE plate_id = ?
+                """, (plate_id,))
+                existing = cursor.fetchone()
+                conn.rollback()
+                if existing and existing[1] == 'IN':
+                    # Xe đang trong bãi - không cho vào lại
+                    raise Exception(f"Xe {plate_view} đã VÀO lúc trước đó")
+                else:
+                    # Xe đã ra - cho phép vào lại bằng cách UPDATE
+                    cursor.execute("""
+                        UPDATE vehicles SET
+                            plate_view = ?,
+                            entry_time = ?,
+                            entry_camera_id = ?,
+                            entry_camera_name = ?,
+                            entry_confidence = ?,
+                            entry_source = ?,
+                            exit_time = NULL,
+                            exit_camera_id = NULL,
+                            exit_camera_name = NULL,
+                            exit_confidence = NULL,
+                            exit_source = NULL,
+                            duration = NULL,
+                            fee = 0,
+                            status = 'IN',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE plate_id = ?
+                    """, (plate_view, entry_time, camera_id, camera_name, confidence, source, plate_id))
+                    conn.commit()
+                    return existing[0] if existing else None
+            except Exception as e:
+                conn.rollback()
+                print(f"❌ Error adding vehicle entry: {e}")
+                raise
+            finally:
+                conn.close()
 
     def update_vehicle_exit(self, plate_id, exit_time, camera_id, camera_name, confidence, source, duration, fee):
         """Update vehicle exit"""
@@ -144,7 +183,9 @@ class CentralDatabase:
             result = cursor.fetchone()
             conn.close()
 
-            return dict(result) if result else None
+            if result:
+                return dict(result)
+            return None
 
     def add_event(self, event_type, camera_id, camera_name, camera_type, plate_text, confidence, source, data):
         """Log event from Edge"""
@@ -216,8 +257,8 @@ class CentralDatabase:
 
             return [dict(row) for row in results]
 
-    def get_history(self, limit=100, today_only=False, status=None):
-        """Get vehicle history"""
+    def get_history(self, limit=100, offset=0, today_only=False, status=None, search=None):
+        """Get vehicle history with optional search"""
         with self.lock:
             conn = sqlite3.connect(self.db_file)
             conn.row_factory = sqlite3.Row
@@ -233,8 +274,21 @@ class CentralDatabase:
                 query += " AND status = ?"
                 params.append(status)
 
-            query += " ORDER BY created_at DESC LIMIT ?"
+            if search:
+                # Search in both plate_id and plate_view (normalized search)
+                # Remove spaces, dots, dashes for flexible search
+                normalized_search = search.upper().replace(" ", "").replace("-", "").replace(".", "")
+                query += """ AND (
+                    REPLACE(REPLACE(REPLACE(UPPER(plate_id), ' ', ''), '-', ''), '.', '') LIKE ?
+                    OR REPLACE(REPLACE(REPLACE(UPPER(plate_view), ' ', ''), '-', ''), '.', '') LIKE ?
+                )"""
+                search_pattern = f"%{normalized_search}%"
+                params.append(search_pattern)
+                params.append(search_pattern)
+
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
             params.append(limit)
+            params.append(offset)
 
             cursor.execute(query, params)
             results = cursor.fetchall()

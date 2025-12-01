@@ -1,4 +1,4 @@
-# FastAPI backend
+# Backend
 fastapi==0.109.0
 uvicorn[standard]==0.27.0
 python-multipart==0.0.6
@@ -7,14 +7,19 @@ python-multipart==0.0.6
 aiortc==1.6.0
 av==11.0.0
 
-# Camera & AI
-picamera2==0.3.30
+# Vision
 opencv-python==4.9.0.80
 numpy==1.26.4
-ultralytics==8.0.196  # YOLO for OCR (giống script test.py)
 
-# WebSocket (included in FastAPI)
+# OCR - YOLO (ultralytics) hoặc ONNX Runtime
+# picamera2 cài system-wide: sudo apt install python3-picamera2
+ultralytics==8.0.196
+onnxruntime==1.16.3
+onnx==1.15.0
+
+# Communication
 websockets==12.0
+requests==2.31.0
 
-# Benchmark & monitoring
+# Utils
 psutil==5.9.0
