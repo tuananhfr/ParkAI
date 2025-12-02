@@ -1,7 +1,7 @@
 /**
  * Component hiển thị ảnh biển số đã phát hiện
  */
-const PlateImage = ({ plateImage, isFullscreen }) => {
+const PlateImage = ({ plateImage }) => {
   return (
     <div className="mb-2 text-center">
       <label className="form-label small mb-1 text-secondary d-block">
@@ -57,4 +57,3 @@ const PlateImage = ({ plateImage, isFullscreen }) => {
 };
 
 export default PlateImage;
-

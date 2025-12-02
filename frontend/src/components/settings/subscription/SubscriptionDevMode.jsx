@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { CENTRAL_URL } from "../config";
+import { CENTRAL_URL } from "@/config";
 
 /**
  * SubscriptionDevMode - Component quản lý thuê bao ở chế độ dev (có thể sửa/xóa)

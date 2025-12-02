@@ -1,20 +1,16 @@
-/**
- * CameraView - Component chính hiển thị camera và xử lý vào/ra
- * Đã được refactor để sử dụng các component và hooks nhỏ hơn
- */
 import { useEffect, useRef, useState } from "react";
-import { CENTRAL_URL } from "../config";
-import { validatePlateNumber } from "../utils/plateValidation";
+import { CENTRAL_URL } from "../../config";
+import { validatePlateNumber } from "../../utils/plateValidation";
 
 // Import components
-import CameraHeader from "./CameraHeader";
-import VideoStream from "./VideoStream";
-import PlateImage from "./PlateImage";
-import PlateInput from "./PlateInput";
-import VehicleInfo from "./VehicleInfo";
-import BarrierControls from "./BarrierControls";
-import EditPlateModal from "./EditPlateModal";
-import Notification from "./Notification";
+import CameraHeader from "./ui/CameraHeader";
+import VideoStream from "./video/VideoStream";
+import PlateImage from "./plate/PlateImage";
+import PlateInput from "./plate/PlateInput";
+import EditPlateModal from "./plate/EditPlateModal";
+import VehicleInfo from "./vehicle/VehicleInfo";
+import BarrierControls from "./barrier/BarrierControls";
+import Notification from "./ui/Notification";
 
 const CameraView = ({ camera, onHistoryUpdate }) => {
   const streamProxy = camera?.stream_proxy;
@@ -370,9 +366,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
             setCannotReadPlate(false);
 
             setTimeout(() => {
-              if (notificationMessage === "🔍 Đang đọc biển số...") {
-                setNotificationMessage(null);
-              }
+              setNotificationMessage((prev) => {
+                if (prev === "🔍 Đang đọc biển số...") {
+                  return null;
+                }
+                return prev;
+              });
             }, 2000);
           }
 
@@ -628,15 +627,22 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           setNotificationMessage(result.message || "✅ Đã xác nhận thành công");
         }
 
-        const vehicleData = result.vehicle_info || result;
-        if (
+        const vehicleData = result.vehicle_info || result || {};
+
+        // Nếu backend không trả entry_time ở cổng VÀO, dùng giờ hiện tại cho UI
+        const nowIso = new Date().toISOString();
+        const computedEntryTime =
           vehicleData.entry_time ||
+          (cameraInfo?.type === "ENTRY" ? nowIso : null);
+
+        if (
+          computedEntryTime ||
           vehicleData.exit_time ||
           vehicleData.fee !== undefined ||
           vehicleData.duration
         ) {
           setVehicleInfo({
-            entry_time: vehicleData.entry_time || null,
+            entry_time: computedEntryTime,
             exit_time: vehicleData.exit_time || null,
             fee: vehicleData.fee !== undefined ? vehicleData.fee : 0,
             duration: vehicleData.duration || null,
@@ -726,20 +732,15 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           Thông tin xe
         </h6>
 
-        <PlateImage plateImage={plateImage} isFullscreen={isFullscreen} />
+        <PlateImage plateImage={plateImage} />
 
         <PlateInput
           plateText={plateText}
           plateSource={plateSource}
           onEditClick={() => setShowEditModal(true)}
-          isFullscreen={isFullscreen}
         />
 
-        <VehicleInfo
-          vehicleInfo={vehicleInfo}
-          cameraType={cameraInfo?.type}
-          isFullscreen={isFullscreen}
-        />
+        <VehicleInfo vehicleInfo={vehicleInfo} cameraType={cameraInfo?.type} />
 
         {cannotReadPlate && (
           <div
@@ -751,16 +752,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           </div>
         )}
 
-        <Notification
-          message={notificationMessage}
-          isFullscreen={isFullscreen}
-        />
+        <Notification message={notificationMessage} />
 
         <BarrierControls
           barrierStatus={barrierStatus}
           isOpening={isOpening}
           onCloseBarrier={closeBarrier}
-          isFullscreen={isFullscreen}
         />
       </div>
 

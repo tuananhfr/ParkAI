@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { CENTRAL_URL } from "../config";
-import SubscriptionDevMode from "./SubscriptionDevMode";
-import SubscriptionList from "./SubscriptionList";
-import StaffList from "./StaffList";
-import CentralSyncServersList from "./CentralSyncServersList";
+import { CENTRAL_URL } from "@/config";
+import SubscriptionDevMode from "./subscription/SubscriptionDevMode";
+import SubscriptionList from "./subscription/SubscriptionList";
+import StaffList from "./staff/StaffList";
+import CentralSyncServersList from "./sync/CentralSyncServersList";
 
 /**
  * SettingsModal - Component modal cài đặt hệ thống
@@ -335,23 +335,28 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                     <div className="row g-3 mb-4">
                       <div className="col-md-6">
                         <label className="form-label small">
-                          Phí cơ bản (2h đầu)
+                          Số giờ miễn phí
                         </label>
                         <div className="input-group input-group-sm">
                           <input
                             type="number"
                             className="form-control"
                             value={config.parking.fee_base}
+                            min="0"
+                            step="0.1"
                             onChange={(e) =>
                               updateConfig(
                                 "parking",
                                 "fee_base",
-                                parseInt(e.target.value)
+                                parseFloat(e.target.value || "0")
                               )
                             }
                           />
-                          <span className="input-group-text">đ</span>
+                          <span className="input-group-text">giờ</span>
                         </div>
+                        <small className="text-muted">
+                          Ví dụ: 0.5 giờ = 30 phút miễn phí
+                        </small>
                       </div>
                       <div className="col-md-6">
                         <label className="form-label small">

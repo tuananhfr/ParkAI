@@ -1,12 +1,7 @@
 /**
  * Component điều khiển barrier (nút đóng barrier)
  */
-const BarrierControls = ({
-  barrierStatus,
-  isOpening,
-  onCloseBarrier,
-  isFullscreen,
-}) => {
+const BarrierControls = ({ barrierStatus, isOpening, onCloseBarrier }) => {
   return (
     <div className="d-flex gap-2 mt-2">
       <button
@@ -23,4 +18,3 @@ const BarrierControls = ({
 };
 
 export default BarrierControls;
-

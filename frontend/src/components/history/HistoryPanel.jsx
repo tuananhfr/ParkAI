@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { formatTime } from "@/utils/formatTime";
 
 /**
  * HistoryPanel - Component hiển thị lịch sử vào/ra và quản lý sửa/xóa
@@ -340,7 +341,7 @@ const HistoryPanel = ({ backendUrl }) => {
                           {change.change_type === "UPDATE" ? "SỬA" : "XÓA"}
                         </span>
                         <span className="text-muted small">
-                          {new Date(change.changed_at).toLocaleString("vi-VN")}
+                          {formatTime(new Date(change.changed_at))}
                         </span>
                       </div>
 
@@ -382,12 +383,14 @@ const HistoryPanel = ({ backendUrl }) => {
                             <div className="mt-1 p-2 bg-light rounded">
                               <div>
                                 <strong>Vào:</strong>{" "}
-                                {change.old_data.entry_time || "N/A"}
+                                {change.old_data.entry_time
+                                  ? formatTime(new Date(change.old_data.entry_time))
+                                  : "N/A"}
                               </div>
                               {change.old_data.exit_time && (
                                 <div>
                                   <strong>Ra:</strong>{" "}
-                                  {change.old_data.exit_time}
+                                  {formatTime(new Date(change.old_data.exit_time))}
                                 </div>
                               )}
                               {change.old_data.fee > 0 && (
@@ -449,7 +452,10 @@ const HistoryPanel = ({ backendUrl }) => {
                             className="bi bi-arrow-down-circle text-success me-1"
                             style={{ fontSize: "0.65rem" }}
                           ></i>
-                          Vào: {entry.entry_time || "N/A"}
+                          Vào:{" "}
+                          {entry.entry_time
+                            ? formatTime(new Date(entry.entry_time))
+                            : "N/A"}
                           {entry.entry_camera_name && (
                             <span className="ms-1">
                               ({entry.entry_camera_name})
@@ -465,7 +471,7 @@ const HistoryPanel = ({ backendUrl }) => {
                               className="bi bi-arrow-up-circle text-danger me-1"
                               style={{ fontSize: "0.65rem" }}
                             ></i>
-                            Ra: {entry.exit_time}
+                            Ra: {formatTime(new Date(entry.exit_time))}
                             {entry.exit_camera_name && (
                               <span className="ms-1">
                                 ({entry.exit_camera_name})

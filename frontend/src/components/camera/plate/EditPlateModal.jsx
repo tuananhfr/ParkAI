@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { validatePlateNumber } from "../utils/plateValidation";
+import { validatePlateNumber } from "@/utils/plateValidation";
 
 /**
  * Modal để nhập biển số thủ công
@@ -112,4 +112,3 @@ const EditPlateModal = ({
 };
 
 export default EditPlateModal;
-

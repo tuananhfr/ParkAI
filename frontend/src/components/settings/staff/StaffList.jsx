@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { CENTRAL_URL } from "../config";
+import { CENTRAL_URL } from "@/config";
 
 /**
  * StaffList - Component hiển thị danh sách người trực

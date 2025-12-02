@@ -1,9 +1,7 @@
 /**
  * Component hiển thị thông báo
  */
-const Notification = ({ message, isFullscreen }) => {
-  if (!message) return null;
-
+const Notification = ({ message }) => {
   const getAlertType = () => {
     if (
       message.includes("✅") ||
@@ -47,17 +45,21 @@ const Notification = ({ message, isFullscreen }) => {
   };
 
   return (
-    <div
-      className={`${getAlertType()} mb-2 py-2 px-3`}
-      style={{ fontSize: "0.9rem" }}
-    >
-      <div className="d-flex align-items-center">
-        <i className={`bi ${getIcon()} me-2`}></i>
-        <span>{message}</span>
-      </div>
+    // Luôn render một container có chiều cao tối thiểu để không đẩy cao/thấp camera giữa các cổng
+    <div style={{ minHeight: "40px", marginBottom: "0.5rem" }}>
+      {message && (
+        <div
+          className={`${getAlertType()} py-2 px-3`}
+          style={{ fontSize: "0.9rem" }}
+        >
+          <div className="d-flex align-items-center">
+            <i className={`bi ${getIcon()} me-2`}></i>
+            <span>{message}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default Notification;
-
