@@ -294,15 +294,15 @@ async def status():
 async def webrtc_offer(request: Request):
     """WebRTC offer endpoint"""
     global camera_manager
-    
+
     pc = None
     try:
         if camera_manager is None:
             return JSONResponse({"error": "Camera not ready"}, status_code=500)
-        
+
         params = await request.json()
         offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
-        
+
         pc = RTCPeerConnection()
         pcs.add(pc)
 
@@ -313,16 +313,35 @@ async def webrtc_offer(request: Request):
 
         camera_track = CameraVideoTrack(camera_manager)
         pc.addTrack(camera_track)
-        
+
         await pc.setRemoteDescription(offer)
         answer = await pc.createAnswer()
+
+        # ===== BITRATE CONTROL: Modify SDP để set max bitrate =====
+        # Thêm bitrate constraints cho video để giảm độ mờ
+        sdp_lines = answer.sdp.split("\r\n")
+        modified_sdp = []
+
+        for line in sdp_lines:
+            modified_sdp.append(line)
+            # Thêm bitrate cho video track (sau dòng m=video)
+            if line.startswith("m=video"):
+                modified_sdp.append("b=AS:2500")      # 2.5 Mbps (Application Specific)
+                modified_sdp.append("b=TIAS:2500000") # 2.5 Mbps (Transport Independent)
+
+        # Create modified answer với bitrate constraints
+        answer = RTCSessionDescription(
+            sdp="\r\n".join(modified_sdp),
+            type="answer"
+        )
+
         await pc.setLocalDescription(answer)
 
         return JSONResponse({
             "sdp": pc.localDescription.sdp,
             "type": pc.localDescription.type
         })
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -358,6 +377,22 @@ async def webrtc_offer_annotated(request: Request):
 
         await pc.setRemoteDescription(offer)
         answer = await pc.createAnswer()
+
+        # ===== BITRATE CONTROL: Modify SDP để set max bitrate =====
+        sdp_lines = answer.sdp.split("\r\n")
+        modified_sdp = []
+
+        for line in sdp_lines:
+            modified_sdp.append(line)
+            if line.startswith("m=video"):
+                modified_sdp.append("b=AS:2500")      # 2.5 Mbps
+                modified_sdp.append("b=TIAS:2500000") # 2.5 Mbps
+
+        answer = RTCSessionDescription(
+            sdp="\r\n".join(modified_sdp),
+            type="answer"
+        )
+
         await pc.setLocalDescription(answer)
 
         return JSONResponse({
@@ -441,7 +476,10 @@ async def open_barrier(request: Request):
         
         # Check trong DB theo logic cổng VÀO/RA
         existing = parking_manager.db.find_entry_in(plate_id)
-        
+
+        # ===== PREPARE VEHICLE INFO =====
+        vehicle_info = None
+
         if config.CAMERA_TYPE == "ENTRY":
             # Cổng VÀO: Xe chưa có trong gara → valid
             if existing:
@@ -457,6 +495,37 @@ async def open_barrier(request: Request):
                     "error": f"Xe {display_text} không có trong gara!"
                 }, status_code=400)
 
+            # ===== TÍNH TOÁN THÔNG TIN CHO CỔNG RA =====
+            from datetime import datetime
+
+            # Check subscription
+            subscription_info = parking_manager.check_subscription(plate_id)
+            is_subscriber = subscription_info.get('is_subscriber', False)
+
+            # Tính duration
+            entry_time_str = existing['entry_time']
+            exit_time = datetime.now()
+            duration = parking_manager.calculate_duration(entry_time_str, exit_time)
+
+            # Tính fee (0 nếu thuê bao)
+            if is_subscriber:
+                fee = 0
+                customer_type = subscription_info.get('type', 'subscription')
+            else:
+                fee = parking_manager.calculate_fee(entry_time_str, exit_time)
+                customer_type = "regular"
+
+            # Prepare vehicle info
+            vehicle_info = {
+                "plate": display_text,
+                "entry_time": entry_time_str,
+                "exit_time": exit_time.strftime("%Y-%m-%d %H:%M:%S"),
+                "duration": duration,
+                "fee": fee,
+                "customer_type": customer_type,
+                "is_subscriber": is_subscriber
+            }
+
         # ========== FLOW ĐƠN GIẢN: CHỈ MỞ BARRIER ==========
         # Lưu thông tin tạm thời để lưu DB khi đóng barrier
         pending_entry = {
@@ -464,11 +533,11 @@ async def open_barrier(request: Request):
             "confidence": confidence,
             "source": source
         }
-        
+
         if barrier_controller:
             barrier_controller.open_barrier(auto_close_delay=None, pending_entry=pending_entry)
 
-        return JSONResponse({
+        response_data = {
             "success": True,
             "message": f"Barrier đã mở cho xe {plate_text}",
             "barrier_opened": True,
@@ -477,7 +546,13 @@ async def open_barrier(request: Request):
                 "name": config.CAMERA_NAME,
                 "type": config.CAMERA_TYPE
             }
-        })
+        }
+
+        # Thêm vehicle info nếu có (cổng RA)
+        if vehicle_info:
+            response_data["vehicle_info"] = vehicle_info
+
+        return JSONResponse(response_data)
 
     except Exception as e:
         import traceback

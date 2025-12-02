@@ -228,16 +228,20 @@ def _enrich_camera_status(status: Dict[str, Any]) -> Dict[str, Any]:
             enriched["status"] = "offline"
             enriched["config_invalid"] = True
         else:
-            # Nếu camera có config nhưng không nhận heartbeat gần đây (15s) → có thể IP sai
-            from datetime import datetime, timedelta
+            # Nếu camera có config nhưng không nhận heartbeat gần đây (60s) → đánh dấu offline
+            from datetime import datetime, timedelta, timezone
             if camera.get("last_heartbeat"):
                 try:
                     last_heartbeat = datetime.strptime(camera["last_heartbeat"], "%Y-%m-%d %H:%M:%S")
-                    time_since_heartbeat = (datetime.now() - last_heartbeat).total_seconds()
-                    # Nếu không nhận heartbeat trong 15 giây và đang online → đánh dấu offline (có thể IP sai)
-                    if time_since_heartbeat > 15 and enriched.get("status") == "online":
+                    # Database lưu UTC, nên dùng utcnow() thay vì now()
+                    time_since_heartbeat = (datetime.utcnow() - last_heartbeat).total_seconds()
+                    # Nếu không nhận heartbeat trong 60 giây → đánh dấu offline
+                    if time_since_heartbeat > 60:
                         enriched["status"] = "offline"
                         enriched["connection_lost"] = True
+                    else:
+                        # Nhận heartbeat gần đây → online
+                        enriched["status"] = "online"
                 except Exception:
                     pass
         
@@ -523,7 +527,11 @@ async def receive_heartbeat(request: Request):
         )
 
         # Broadcast camera update to WebSocket clients (ngay khi có heartbeat)
-        asyncio.create_task(broadcast_camera_update())
+        try:
+            asyncio.create_task(broadcast_camera_update())
+        except Exception as broadcast_err:
+            # Log but don't fail the heartbeat
+            print(f"⚠️ Failed to broadcast camera update: {broadcast_err}")
 
         return JSONResponse({"success": True})
 
@@ -593,7 +601,9 @@ async def get_parking_history(
     offset: int = 0,
     today_only: bool = False,
     status: str = None,
-    search: str = None
+    search: str = None,
+    in_parking_only: bool = False,
+    entries_only: bool = False
 ):
     """Get vehicle history with optional search by plate number"""
     global database
@@ -603,7 +613,9 @@ async def get_parking_history(
         offset=offset,
         today_only=today_only,
         status=status,
-        search=search
+        search=search,
+        in_parking_only=in_parking_only,
+        entries_only=entries_only
     )
     stats = database.get_stats()
 
@@ -612,6 +624,92 @@ async def get_parking_history(
         "count": len(history),
         "stats": stats,
         "history": history
+    })
+
+
+@app.put("/api/parking/history/{history_id}")
+async def update_history_entry(history_id: int, request: Request):
+    """Update biển số trong history entry"""
+    global database
+
+    try:
+        data = await request.json()
+        new_plate_id = data.get("plate_id")
+        new_plate_view = data.get("plate_view")
+
+        if not new_plate_id or not new_plate_view:
+            return JSONResponse({
+                "success": False,
+                "error": "plate_id và plate_view là bắt buộc"
+            }, status_code=400)
+
+        success = database.update_history_entry(
+            history_id=history_id,
+            new_plate_id=new_plate_id,
+            new_plate_view=new_plate_view
+        )
+
+        if success:
+            # Broadcast update
+            await broadcast_history_update({"type": "updated", "history_id": history_id})
+            return JSONResponse({"success": True})
+        else:
+            return JSONResponse({
+                "success": False,
+                "error": "Không tìm thấy entry hoặc lỗi khi cập nhật"
+            }, status_code=404)
+
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.delete("/api/parking/history/{history_id}")
+async def delete_history_entry(history_id: int):
+    """Delete history entry"""
+    global database
+
+    try:
+        success = database.delete_history_entry(history_id)
+
+        if success:
+            # Broadcast update
+            await broadcast_history_update({"type": "deleted", "history_id": history_id})
+            return JSONResponse({"success": True})
+        else:
+            return JSONResponse({
+                "success": False,
+                "error": "Không tìm thấy entry hoặc lỗi khi xóa"
+            }, status_code=404)
+
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/api/parking/history/changes")
+async def get_history_changes(
+    limit: int = 100,
+    offset: int = 0,
+    history_id: int = None
+):
+    """Get lịch sử thay đổi"""
+    global database
+
+    changes = database.get_history_changes(
+        limit=limit,
+        offset=offset,
+        history_id=history_id
+    )
+
+    return JSONResponse({
+        "success": True,
+        "count": len(changes),
+        "changes": changes
     })
 
 

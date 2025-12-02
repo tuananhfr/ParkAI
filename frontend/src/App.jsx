@@ -12,8 +12,12 @@ const HistoryPanel = ({ backendUrl }) => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
-  const [filter, setFilter] = useState("all"); // all | today | in | out | in_parking
+  const [filter, setFilter] = useState("all"); // all | today | in | out | in_parking | changes
   const [searchText, setSearchText] = useState(""); // Tìm kiếm biển số
+  const [editingEntry, setEditingEntry] = useState(null);
+  const [editPlateText, setEditPlateText] = useState("");
+  const [changes, setChanges] = useState([]);
+  const [changesLoading, setChangesLoading] = useState(false);
 
   const fetchHistory = async (isLoadMore = false) => {
     try {
@@ -33,11 +37,17 @@ const HistoryPanel = ({ backendUrl }) => {
       if (filter === "today") {
         params.append("today_only", "true");
       } else if (filter === "in") {
-        params.append("status", "IN");
+        // Filter "VÀO" - Tất cả lần vào (bao gồm cả đã ra)
+        params.append("entries_only", "true");
       } else if (filter === "in_parking") {
-        params.append("status", "IN");
+        // Filter "Trong bãi" - Chỉ xe ĐANG trong bãi (chưa ra)
+        params.append("in_parking_only", "true");
       } else if (filter === "out") {
         params.append("status", "OUT");
+      } else if (filter === "changes") {
+        // Tab "Đã thay đổi" - không fetch history, sẽ fetch changes riêng
+        fetchChanges();
+        return;
       }
 
       // Thêm search parameter nếu có
@@ -72,8 +82,92 @@ const HistoryPanel = ({ backendUrl }) => {
     }
   };
 
+  const fetchChanges = async () => {
+    try {
+      setChangesLoading(true);
+      const response = await fetch(
+        `${backendUrl}/api/parking/history/changes?limit=100&offset=0`
+      );
+      const data = await response.json();
+      if (data.success) {
+        setChanges(data.changes || []);
+      }
+    } catch (err) {
+      console.error("Error fetching changes:", err);
+    } finally {
+      setChangesLoading(false);
+    }
+  };
+
+  const handleUpdateEntry = async (historyId) => {
+    const normalizedPlate = editPlateText.trim().toUpperCase();
+    if (!normalizedPlate || normalizedPlate.length < 5) {
+      alert("Biển số phải có ít nhất 5 ký tự!");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${backendUrl}/api/parking/history/${historyId}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plate_id: normalizedPlate.replace(/[-.\s]/g, ""),
+            plate_view: normalizedPlate,
+          }),
+        }
+      );
+
+      const data = await response.json();
+      if (data.success) {
+        setEditingEntry(null);
+        setEditPlateText("");
+        fetchHistory();
+        if (filter === "changes") {
+          fetchChanges();
+        }
+      } else {
+        alert(`Lỗi: ${data.error || "Không thể cập nhật"}`);
+      }
+    } catch (err) {
+      alert("Lỗi kết nối đến server");
+    }
+  };
+
+  const handleDeleteEntry = async (historyId) => {
+    if (!window.confirm("Bạn có chắc muốn xóa entry này?")) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${backendUrl}/api/parking/history/${historyId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+      if (data.success) {
+        fetchHistory();
+        if (filter === "changes") {
+          fetchChanges();
+        }
+      } else {
+        alert(`Lỗi: ${data.error || "Không thể xóa"}`);
+      }
+    } catch (err) {
+      alert("Lỗi kết nối đến server");
+    }
+  };
+
   useEffect(() => {
     // Load lần đầu hoặc khi filter/search thay đổi
+    if (filter === "changes") {
+      fetchChanges();
+      return;
+    }
     const timeoutId = setTimeout(() => {
       fetchHistory();
     }, 500);
@@ -178,6 +272,15 @@ const HistoryPanel = ({ backendUrl }) => {
           >
             RA
           </button>
+          <button
+            className={`btn ${
+              filter === "changes" ? "btn-warning" : "btn-outline-warning"
+            }`}
+            onClick={() => setFilter("changes")}
+          >
+            <i className="bi bi-clock-history me-1"></i>
+            Đã thay đổi
+          </button>
         </div>
 
         {/* Tìm kiếm biển số */}
@@ -206,9 +309,106 @@ const HistoryPanel = ({ backendUrl }) => {
         </div>
       </div>
 
-      {/* History List */}
+      {/* History List hoặc Changes List */}
       <div className="flex-grow-1 overflow-auto p-2">
-        {loading ? (
+        {filter === "changes" ? (
+          // Tab "Đã thay đổi"
+          changesLoading ? (
+            <div className="text-center py-4">
+              <div className="spinner-border spinner-border-sm text-primary"></div>
+            </div>
+          ) : changes.length === 0 ? (
+            <div className="text-center text-muted py-4 small">
+              <i className="bi bi-inbox"></i>
+              <div>Chưa có thay đổi nào</div>
+            </div>
+          ) : (
+            <div className="list-group list-group-flush">
+              {changes.map((change) => (
+                <div
+                  key={change.id}
+                  className="list-group-item p-2 border-bottom"
+                >
+                  <div className="row g-1">
+                    <div className="col flex-grow-1">
+                      <div className="mb-2">
+                        <span
+                          className={`badge ${
+                            change.change_type === "UPDATE"
+                              ? "bg-warning"
+                              : "bg-danger"
+                          } me-2`}
+                        >
+                          {change.change_type === "UPDATE" ? "SỬA" : "XÓA"}
+                        </span>
+                        <span className="text-muted small">
+                          {new Date(change.changed_at).toLocaleString("vi-VN")}
+                        </span>
+                      </div>
+
+                      {change.change_type === "UPDATE" ? (
+                        <div>
+                          <div className="mb-1">
+                            <span className="text-danger small">
+                              <i className="bi bi-arrow-down me-1"></i>
+                              Cũ: {change.old_plate_view || change.old_plate_id}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-success small">
+                              <i className="bi bi-arrow-up me-1"></i>
+                              Mới:{" "}
+                              {change.new_plate_view || change.new_plate_id}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <span className="text-danger small">
+                            <i className="bi bi-trash me-1"></i>
+                            Đã xóa:{" "}
+                            {change.old_plate_view || change.old_plate_id}
+                          </span>
+                        </div>
+                      )}
+
+                      {change.old_data && (
+                        <div
+                          className="mt-2 text-muted"
+                          style={{ fontSize: "0.7rem" }}
+                        >
+                          <details>
+                            <summary className="cursor-pointer">
+                              Xem chi tiết
+                            </summary>
+                            <div className="mt-1 p-2 bg-light rounded">
+                              <div>
+                                <strong>Vào:</strong>{" "}
+                                {change.old_data.entry_time || "N/A"}
+                              </div>
+                              {change.old_data.exit_time && (
+                                <div>
+                                  <strong>Ra:</strong>{" "}
+                                  {change.old_data.exit_time}
+                                </div>
+                              )}
+                              {change.old_data.fee > 0 && (
+                                <div>
+                                  <strong>Phí:</strong>{" "}
+                                  {change.old_data.fee.toLocaleString("vi-VN")}đ
+                                </div>
+                              )}
+                            </div>
+                          </details>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )
+        ) : loading ? (
           <div className="text-center py-4">
             <div className="spinner-border spinner-border-sm text-primary"></div>
           </div>
@@ -299,8 +499,30 @@ const HistoryPanel = ({ backendUrl }) => {
                       </div>
                     </div>
 
-                    {/* Cột phải: Giá vé và trạng thái */}
+                    {/* Cột phải: Giá vé, trạng thái và nút sửa/xóa */}
                     <div className="col-auto text-end">
+                      <div className="d-flex gap-1 mb-2 justify-content-end">
+                        <button
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => {
+                            setEditingEntry(entry);
+                            setEditPlateText(
+                              entry.plate_view || entry.plate_id
+                            );
+                          }}
+                          title="Sửa biển số"
+                        >
+                          <i className="bi bi-pencil-fill"></i>
+                        </button>
+                        <button
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => handleDeleteEntry(entry.id)}
+                          title="Xóa"
+                        >
+                          <i className="bi bi-trash-fill"></i>
+                        </button>
+                      </div>
+
                       <span
                         className={`badge ${
                           entry.status === "IN" ? "bg-success" : "bg-secondary"
@@ -368,6 +590,83 @@ const HistoryPanel = ({ backendUrl }) => {
           </>
         )}
       </div>
+
+      {/* Modal sửa biển số */}
+      {editingEntry && (
+        <div
+          className="modal show d-block"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setEditingEntry(null);
+            }
+          }}
+        >
+          <div
+            className="modal-dialog modal-dialog-centered"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-content">
+              <div className="modal-header bg-primary text-white">
+                <h6 className="modal-title mb-0">
+                  <i className="bi bi-pencil-fill me-2"></i>
+                  Sửa biển số xe
+                </h6>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={() => setEditingEntry(null)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="mb-3">
+                  <label className="form-label">
+                    <i className="bi bi-123 me-1"></i>
+                    Biển số xe mới
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control form-control-lg text-center fw-bold text-uppercase"
+                    value={editPlateText}
+                    onChange={(e) =>
+                      setEditPlateText(e.target.value.toUpperCase())
+                    }
+                    placeholder="VD: 30A12345"
+                    style={{
+                      fontSize: "1.2rem",
+                      letterSpacing: "2px",
+                    }}
+                    autoFocus
+                  />
+                  <small className="text-muted">
+                    Biển số cũ:{" "}
+                    <strong>
+                      {editingEntry.plate_view || editingEntry.plate_id}
+                    </strong>
+                  </small>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setEditingEntry(null)}
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => handleUpdateEntry(editingEntry.id)}
+                >
+                  <i className="bi bi-check-circle-fill me-1"></i>
+                  Lưu
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -1268,7 +1567,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState(null);
-  const [activeTab, setActiveTab] = useState("parking"); // parking, cameras, staff, subscriptions, report, central_server, central_sync, card_reader, barrier
+  const [activeTab, setActiveTab] = useState("cameras"); // parking, cameras, staff, subscriptions, report, central_server, central_sync, card_reader, barrier
   const [showAddCameraForm, setShowAddCameraForm] = useState(false);
   const [subscriptionDevMode, setSubscriptionDevMode] = useState(false);
   const [newCamera, setNewCamera] = useState({
@@ -1281,7 +1580,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
     if (show) {
       fetchConfig();
       // Reset form khi mở modal
-      setActiveTab("parking"); // Reset về tab đầu tiên
+      setActiveTab("cameras"); // Reset về tab đầu tiên
       setShowAddCameraForm(false);
       setNewCamera({
         name: "",
@@ -1480,18 +1779,6 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                   <li className="nav-item" role="presentation">
                     <button
                       className={`nav-link ${
-                        activeTab === "parking" ? "active" : ""
-                      }`}
-                      onClick={() => setActiveTab("parking")}
-                      type="button"
-                    >
-                      <i className="bi bi-cash-coin me-2"></i>
-                      Phí gửi xe
-                    </button>
-                  </li>
-                  <li className="nav-item" role="presentation">
-                    <button
-                      className={`nav-link ${
                         activeTab === "cameras" ? "active" : ""
                       }`}
                       onClick={() => setActiveTab("cameras")}
@@ -1499,6 +1786,18 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                     >
                       <i className="bi bi-camera-video me-2"></i>
                       Cameras
+                    </button>
+                  </li>
+                  <li className="nav-item" role="presentation">
+                    <button
+                      className={`nav-link ${
+                        activeTab === "parking" ? "active" : ""
+                      }`}
+                      onClick={() => setActiveTab("parking")}
+                      type="button"
+                    >
+                      <i className="bi bi-cash-coin me-2"></i>
+                      Phí gửi xe
                     </button>
                   </li>
                   <li className="nav-item" role="presentation">
@@ -2206,14 +2505,60 @@ function App() {
   const [stats, setStats] = useState(null);
 
   useEffect(() => {
-    // Fetch stats (vẫn dùng polling vì không thay đổi thường xuyên)
+    // Fetch stats NGAY để có UI trong 100ms
     fetchStats();
     const statsInterval = setInterval(fetchStats, 10000);
 
-    // WebSocket cho camera updates (real-time)
+    // ===== PROGRESSIVE CAMERA LOADING =====
+    // Load cameras tuần tự với delay 300ms/camera để tránh quá tải WebRTC
+    const loadCamerasProgressively = async () => {
+      try {
+        const response = await fetch(`${CENTRAL_URL}/api/cameras`);
+        const data = await response.json();
+
+        if (data.success && data.cameras) {
+          // Sort cameras by ID để load theo thứ tự
+          const sortedCameras = data.cameras.sort((a, b) => a.id - b.id);
+
+          // Load từng camera với delay 300ms để tránh overload
+          for (let i = 0; i < sortedCameras.length; i++) {
+            // Delay 300ms giữa mỗi camera (ngoại trừ camera đầu tiên)
+            if (i > 0) {
+              await new Promise((resolve) => setTimeout(resolve, 300));
+            }
+
+            // Add camera vào state
+            setCameras((prev) => {
+              const exists = prev.find((c) => c.id === sortedCameras[i].id);
+              if (exists) {
+                // Update existing camera
+                return prev.map((c) =>
+                  c.id === sortedCameras[i].id ? sortedCameras[i] : c
+                );
+              } else {
+                // Add new camera
+                return [...prev, sortedCameras[i]];
+              }
+            });
+          }
+
+          console.log(
+            `[Cameras] Loaded ${sortedCameras.length} cameras progressively`
+          );
+        }
+      } catch (err) {
+        console.error("[Cameras] Failed to load cameras:", err);
+      }
+    };
+
+    // Start progressive loading NGAY
+    loadCamerasProgressively();
+
+    // WebSocket cho camera updates (CHẠY SONG SONG - real-time updates)
     const wsUrl = CENTRAL_URL.replace("http", "ws") + "/ws/cameras";
     let ws = null;
     let reconnectTimer = null;
+    let pingInterval = null;
 
     const connect = () => {
       try {
@@ -2221,6 +2566,20 @@ function App() {
 
         ws.onopen = () => {
           console.log("[Cameras] WebSocket connected");
+
+          // Start ping interval khi connection mở
+          pingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              try {
+                ws.send("ping");
+              } catch (err) {
+                console.error("[Cameras] Ping error:", err);
+                if (pingInterval) clearInterval(pingInterval);
+              }
+            } else {
+              if (pingInterval) clearInterval(pingInterval);
+            }
+          }, 10000); // Ping mỗi 10 giây
         };
 
         ws.onmessage = (event) => {
@@ -2237,6 +2596,7 @@ function App() {
 
             const message = JSON.parse(data);
             if (message.type === "cameras_update" && message.data) {
+              // UPDATE cameras qua WebSocket (realtime)
               setCameras(message.data.cameras || []);
             }
           } catch (err) {
@@ -2250,36 +2610,17 @@ function App() {
 
         ws.onclose = () => {
           console.log("[Cameras] WebSocket disconnected, reconnecting...");
-          // Reconnect sau 3 giây
-          reconnectTimer = setTimeout(connect, 3000);
+          // Cleanup ping interval
+          if (pingInterval) {
+            clearInterval(pingInterval);
+            pingInterval = null;
+          }
+          // Reconnect sau 1 giây (giảm từ 3s)
+          reconnectTimer = setTimeout(connect, 1000);
         };
-
-        // Send ping every 10 seconds to keep connection alive
-        let pingInterval = null;
-        if (ws && ws.readyState === WebSocket.OPEN) {
-          pingInterval = setInterval(() => {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-              try {
-                ws.send("ping");
-              } catch (err) {
-                console.error("[Cameras] Ping error:", err);
-                if (pingInterval) clearInterval(pingInterval);
-              }
-            } else {
-              if (pingInterval) clearInterval(pingInterval);
-            }
-          }, 10000); // Ping mỗi 10 giây
-
-          // Cleanup ping interval when connection closes
-          const originalOnClose = ws.onclose;
-          ws.onclose = (event) => {
-            if (pingInterval) clearInterval(pingInterval);
-            if (originalOnClose) originalOnClose.call(ws, event);
-          };
-        }
       } catch (err) {
         console.error("[Cameras] WebSocket connection error:", err);
-        reconnectTimer = setTimeout(connect, 3000);
+        reconnectTimer = setTimeout(connect, 1000);
       }
     };
 
@@ -2288,6 +2629,7 @@ function App() {
     return () => {
       if (statsInterval) clearInterval(statsInterval);
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (pingInterval) clearInterval(pingInterval);
       if (ws) {
         ws.onclose = null; // Prevent reconnection
         ws.close();

@@ -48,6 +48,7 @@ CENTRAL_SYNC_SERVERS = os.getenv("CENTRAL_SYNC_SERVERS", "[]")  # Ví dụ: '["h
 EDGE_CAMERAS = {
     1: {
         "name": "Cổng A",
+        "camera_type": "EXIT",
         "base_url": os.getenv("EDGE1_URL", "http://192.168.0.144:5000"),
         "ws_url": os.getenv(
             "EDGE1_WS_URL", "ws://192.168.0.144:5000/ws/detections"
@@ -57,14 +58,4 @@ EDGE_CAMERAS = {
         "info_path": "/api/camera/info",
         "open_barrier_path": "/api/open-barrier",
     },
-    # Ví dụ thêm camera khác:
-    # 2: {
-    #     "name": "Cổng ra B",
-    #     "base_url": os.getenv("EDGE2_URL", ""),
-    #     "ws_url": os.getenv("EDGE2_WS_URL", ""),
-    #     "default_mode": os.getenv("EDGE2_DEFAULT_MODE", "raw"),
-    #     "supports_annotated": False,
-    #     "info_path": "/api/camera/info",
-    #     "open_barrier_path": "/api/open-barrier",
-    # },
 }

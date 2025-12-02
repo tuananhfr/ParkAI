@@ -11,6 +11,24 @@ const formatTime = (date) =>
     second: "2-digit",
   });
 
+// Validate biển số Việt Nam
+const validatePlateNumber = (plateText) => {
+  if (!plateText || plateText.trim().length < 5) {
+    return false;
+  }
+
+  const normalizedPlate = plateText
+    .trim()
+    .toUpperCase()
+    .replace(/[-.\s]/g, "");
+
+  // Format biển số Việt Nam: 2 số + 1-2 chữ cái + 4-6 số
+  // VD: 30A12345, 30AB1234, 29A123456
+  const platePattern = /^[0-9]{2}[A-Z]{1,2}[0-9]{4,6}$/;
+
+  return platePattern.test(normalizedPlate);
+};
+
 const CameraView = ({ camera, onHistoryUpdate }) => {
   const streamProxy = camera?.stream_proxy;
   const controlProxy = camera?.control_proxy;
@@ -62,7 +80,10 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     fee: 0,
     duration: null,
     customer_type: null,
+    is_subscriber: false,
   });
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editPlateText, setEditPlateText] = useState("");
 
   useEffect(() => {
     setCameraInfo({
@@ -91,6 +112,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           fee: 0,
           duration: null,
           customer_type: null,
+          is_subscriber: false,
         });
         return;
       }
@@ -121,6 +143,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               duration: vehicle.duration || null,
               customer_type:
                 vehicle.customer_type || vehicle.vehicle_type || null,
+              is_subscriber: vehicle.is_subscriber || false,
             });
           } else {
             // Không tìm thấy, giữ nguyên hoặc reset
@@ -130,6 +153,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               fee: 0,
               duration: null,
               customer_type: null,
+              is_subscriber: false,
             });
           }
         }
@@ -369,46 +393,33 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
 
           // BƯỚC 2: Nhận text sau khi OCR xong
           if (normalizedPlate) {
-            // BƯỚC 3: CHECK VALIDATION STATUS
-            const validationStatus = detectionWithText?.validation_status;
-            const validationMessage =
-              detectionWithText?.validation_message || "";
+            // BƯỚC 3: VALIDATE FORMAT - Chỉ hiển thị nếu đúng format
+            const isValidFormat = validatePlateNumber(normalizedPlate);
 
-            if (validationStatus === "invalid") {
-              // Biển số không hợp lệ → Cảnh báo và reset
-              setPlateValid(false);
-              setNotificationMessage(`⚠️ ${validationMessage}`);
-              setTimeout(() => {
-                setNotificationMessage(null);
-              }, 5000);
+            if (!isValidFormat) {
+              // Biển số sai format → KHÔNG LÀM GÌ (không hiển thị, không cảnh báo)
+              // Chỉ bỏ qua và chờ lần quét tiếp theo
+              return;
+            }
 
-              // Reset img và text
-              if (!userEditedRef.current) {
-                setPlateText("");
-                setPlateSource("");
-                setPlateConfidence(0);
-                setPlateImage(null);
-              }
-              setCannotReadPlate(true);
-            } else {
-              // Biển số hợp lệ → Hiển thị bình thường
-              setPlateValid(true);
-              // Cập nhật ảnh biển số cắt từ detection (nếu có)
-              if (detectionWithText?.plate_image) {
-                setPlateImage(detectionWithText.plate_image);
-              }
+            // Biển số đúng format → Hiển thị lên input
+            setPlateValid(true);
+            // Cập nhật ảnh biển số cắt từ detection (nếu có)
+            if (detectionWithText?.plate_image) {
+              setPlateImage(detectionWithText.plate_image);
+            }
 
-              if (!userEditedRef.current) {
-                setPlateText(normalizedPlate);
-                setPlateSource("auto");
-                setPlateConfidence(detectionWithText?.confidence || 0);
-              }
-              setCannotReadPlate(false);
+            // Chỉ cập nhật nếu user không đang edit trong modal
+            if (!userEditedRef.current && !showEditModal) {
+              setPlateText(normalizedPlate);
+              setPlateSource("auto");
+              setPlateConfidence(detectionWithText?.confidence || 0);
+            }
+            setCannotReadPlate(false);
 
-              // Clear "Đang đọc biển số..." notification
-              if (notificationMessage === "🔍 Đang đọc biển số...") {
-                setNotificationMessage(null);
-              }
+            // Clear "Đang đọc biển số..." notification
+            if (notificationMessage === "🔍 Đang đọc biển số...") {
+              setNotificationMessage(null);
             }
           } else {
             // Không detect được plate
@@ -642,19 +653,22 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           setNotificationMessage(result.message || "✅ Đã xác nhận thành công");
         }
 
-        // Lưu thông tin vehicle từ response
+        // Lưu thông tin vehicle từ response (ưu tiên vehicle_info object từ backend)
+        const vehicleData = result.vehicle_info || result;
         if (
-          result.entry_time ||
-          result.exit_time ||
-          result.fee ||
-          result.duration
+          vehicleData.entry_time ||
+          vehicleData.exit_time ||
+          vehicleData.fee !== undefined ||
+          vehicleData.duration
         ) {
           setVehicleInfo({
-            entry_time: result.entry_time || null,
-            exit_time: result.exit_time || null,
-            fee: result.fee || 0,
-            duration: result.duration || null,
-            customer_type: result.customer_type || result.vehicle_type || null,
+            entry_time: vehicleData.entry_time || null,
+            exit_time: vehicleData.exit_time || null,
+            fee: vehicleData.fee !== undefined ? vehicleData.fee : 0,
+            duration: vehicleData.duration || null,
+            customer_type:
+              vehicleData.customer_type || vehicleData.vehicle_type || null,
+            is_subscriber: vehicleData.is_subscriber || false,
           });
         }
 
@@ -714,8 +728,10 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
   // ========== TỰ ĐỘNG MỞ BARRIER KHI CÓ BIỂN SỐ HỢP LỆ ==========
   useEffect(() => {
     // Kiểm tra tất cả điều kiện giống button "Mở barrier"
+    // KHÔNG tự động mở khi user đang edit trong modal
     const shouldAutoOpen =
       !isOpening &&
+      !showEditModal &&
       plateText.trim() &&
       controlProxy?.open_barrier_url &&
       !barrierStatus.is_open &&
@@ -731,6 +747,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     }
   }, [
     isOpening,
+    showEditModal,
     plateText,
     controlProxy?.open_barrier_url,
     barrierStatus.is_open,
@@ -769,6 +786,47 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     } catch (err) {
       setIsFullscreen((prev) => !prev);
     }
+  };
+
+  const handleConfirmEdit = () => {
+    const normalizedPlate = editPlateText.trim().toUpperCase();
+
+    if (!normalizedPlate || normalizedPlate.length < 5) {
+      setNotificationMessage("⚠️ Biển số phải có ít nhất 5 ký tự!");
+      setTimeout(() => {
+        setNotificationMessage(null);
+      }, 3000);
+      return;
+    }
+
+    // Validate biển số cơ bản (có thể mở rộng thêm)
+    const platePattern = /^[0-9]{2}[A-Z]{1,2}[0-9]{4,6}$/;
+    const cleanPlate = normalizedPlate.replace(/[-.\s]/g, "");
+
+    if (!platePattern.test(cleanPlate)) {
+      setNotificationMessage(
+        "⚠️ Biển số không hợp lệ! Vui lòng nhập đúng định dạng (VD: 30A12345)"
+      );
+      setTimeout(() => {
+        setNotificationMessage(null);
+      }, 3000);
+      return;
+    }
+
+    // Cập nhật biển số sau khi validate thành công
+    setPlateText(normalizedPlate);
+    plateTextRef.current = normalizedPlate;
+    setUserEdited(true);
+    userEditedRef.current = true;
+    setPlateSource("manual");
+    setPlateValid(true);
+    setShowEditModal(false);
+    setEditPlateText("");
+
+    setNotificationMessage("✅ Đã cập nhật biển số!");
+    setTimeout(() => {
+      setNotificationMessage(null);
+    }, 2000);
   };
 
   return (
@@ -854,7 +912,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
             muted
             className="w-100 h-100 d-block"
             style={{
-              objectFit: "fill",
+              objectFit: "contain",
               opacity: isVideoLoaded ? 1 : 0,
               transition: "opacity 0.3s ease-in-out",
             }}
@@ -957,39 +1015,35 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
             <input
               type="text"
               value={plateText}
-              onChange={(e) => {
-                setPlateText(e.target.value);
-                plateTextRef.current = e.target.value;
-                setUserEdited(true);
-                userEditedRef.current = true;
-                if (plateSource === "auto") {
-                  setPlateSource("manual");
-                }
-                // Reset validation khi user edit (sẽ validate lại khi mở barrier)
-                setPlateValid(true);
-              }}
+              readOnly
               className="form-control text-center fw-bold text-uppercase"
               placeholder="Chờ quét hoặc nhập tay..."
               style={{
                 fontSize: "0.875rem",
                 letterSpacing: "1px",
                 padding: "0.25rem 0.5rem",
+                backgroundColor: plateSource === "auto" ? "#f8f9fa" : "#fff3cd",
               }}
             />
-            {plateSource === "auto" && (
-              <span
-                className="input-group-text bg-info text-white px-2"
-                style={{ fontSize: "0.75rem" }}
-              >
-                <i className="bi bi-robot"></i>
-              </span>
-            )}
+            <button
+              type="button"
+              className="btn btn-outline-primary"
+              onClick={() => {
+                setEditPlateText(plateText);
+                setShowEditModal(true);
+              }}
+              title="Nhập biển số thủ công"
+              style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
+            >
+              <i className="bi bi-pencil-fill"></i>
+            </button>
             {plateSource === "manual" && (
               <span
                 className="input-group-text bg-warning text-dark px-2"
                 style={{ fontSize: "0.75rem" }}
+                title="Biển số đã nhập thủ công"
               >
-                <i className="bi bi-pencil-fill"></i>
+                <i className="bi bi-hand-index-thumb-fill"></i>
               </span>
             )}
           </div>
@@ -1022,7 +1076,20 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               <span className="text-muted" style={{ fontSize: "0.7rem" }}>
                 <i className="bi bi-person-fill me-1"></i>Loại:
               </span>
-              {vehicleInfo.customer_type ? (
+              {vehicleInfo.is_subscriber ? (
+                <span
+                  className="badge bg-success"
+                  style={{ fontSize: "0.7rem" }}
+                  title="Thuê bao - Miễn phí"
+                >
+                  <i className="bi bi-star-fill me-1"></i>
+                  {vehicleInfo.customer_type === "company"
+                    ? "Công ty"
+                    : vehicleInfo.customer_type === "monthly"
+                    ? "Thẻ tháng"
+                    : "Thuê bao"}
+                </span>
+              ) : vehicleInfo.customer_type ? (
                 <span className="badge bg-info" style={{ fontSize: "0.7rem" }}>
                   {vehicleInfo.customer_type}
                 </span>
@@ -1132,47 +1199,8 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           </div>
         )}
 
-        {/* 2 BUTTON MỞ/ĐÓNG BARRIER - LUÔN HIỂN THỊ CẢ 2 */}
+        {/* 2 BUTTON ĐÓNG BARRIER */}
         <div className="d-flex gap-2 mt-2">
-          {/* Button MỞ CỬA */}
-          <button
-            className={`btn flex-fill ${
-              cameraInfo?.type === "ENTRY" ? "btn-success" : "btn-danger"
-            }`}
-            onClick={(e) => {
-              if (
-                !isOpening &&
-                plateText.trim() &&
-                controlProxy?.open_barrier_url &&
-                !barrierStatus.is_open &&
-                plateValid
-              ) {
-                handleOpenBarrier();
-              }
-            }}
-            disabled={
-              isOpening ||
-              !plateText.trim() ||
-              !controlProxy?.open_barrier_url ||
-              barrierStatus.is_open || // Disable khi barrier đang mở
-              !plateValid // Disable khi biển số không hợp lệ
-            }
-            style={{ fontSize: "1rem", padding: "10px" }}
-          >
-            {isOpening ? (
-              <>
-                <span className="spinner-border spinner-border-sm me-2"></span>
-                Đang mở barrier...
-              </>
-            ) : (
-              <>
-                <i className="bi bi-door-open-fill me-2"></i>
-                Mở barrier {cameraInfo?.type === "ENTRY" ? "VÀO" : "RA"}
-              </>
-            )}
-          </button>
-
-          {/* Button ĐÓNG BARRIER */}
           <button
             className="btn btn-danger flex-fill"
             onClick={closeBarrier}
@@ -1193,6 +1221,85 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
             <i className="bi bi-exclamation-triangle-fill me-1"></i>
             {error}
           </small>
+        </div>
+      )}
+
+      {/* Modal nhập biển số thủ công */}
+      {showEditModal && (
+        <div
+          className="modal show d-block"
+          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowEditModal(false);
+            }
+          }}
+        >
+          <div
+            className="modal-dialog modal-dialog-centered"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-content">
+              <div className="modal-header bg-primary text-white">
+                <h6 className="modal-title mb-0">
+                  <i className="bi bi-pencil-fill me-2"></i>
+                  Nhập biển số xe thủ công
+                </h6>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={() => setShowEditModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="mb-3">
+                  <label className="form-label">
+                    <i className="bi bi-123 me-1"></i>
+                    Biển số xe
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control form-control-lg text-center fw-bold text-uppercase"
+                    value={editPlateText}
+                    onChange={(e) =>
+                      setEditPlateText(e.target.value.toUpperCase())
+                    }
+                    placeholder="VD: 30A12345"
+                    style={{
+                      fontSize: "1.2rem",
+                      letterSpacing: "2px",
+                    }}
+                    onKeyPress={(e) => {
+                      if (e.key === "Enter") {
+                        handleConfirmEdit();
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <small className="text-muted">
+                    Nhập biển số và nhấn Enter hoặc click "Xác nhận"
+                  </small>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowEditModal(false)}
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={handleConfirmEdit}
+                >
+                  <i className="bi bi-check-circle-fill me-1"></i>
+                  Xác nhận
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

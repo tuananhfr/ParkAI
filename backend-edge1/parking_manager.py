@@ -2,6 +2,9 @@
 Parking Manager - Sử dụng SQLite
 """
 import re
+import json
+import os
+import httpx
 from datetime import datetime
 from database import Database
 
@@ -10,6 +13,114 @@ class ParkingManager:
 
     def __init__(self, db_file="data/parking.db"):
         self.db = Database(db_file)
+        self._subscription_cache = None
+        self._subscription_cache_time = None
+
+    def check_subscription(self, plate_id):
+        """
+        Kiểm tra xem biển số có trong danh sách thuê bao không
+
+        Return: {
+            "is_subscriber": True/False,
+            "type": "company" | "monthly" | None,
+            "owner_name": str | None
+        }
+        """
+        try:
+            # Cache subscriptions trong 60 giây để tránh đọc file liên tục
+            now = datetime.now()
+            if self._subscription_cache is None or \
+               (self._subscription_cache_time and (now - self._subscription_cache_time).total_seconds() > 60):
+                # Fetch subscriptions từ Central API
+                import config
+                central_url = config.CENTRAL_SERVER_URL
+
+                try:
+                    # Sync call (trong context này OK vì chỉ gọi 1 lần/60s)
+                    import requests
+                    response = requests.get(f"{central_url}/api/subscriptions", timeout=2)
+
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get('success'):
+                            self._subscription_cache = data.get('subscriptions', [])
+                            self._subscription_cache_time = now
+                except Exception as e:
+                    print(f"⚠️ Failed to fetch subscriptions from Central: {e}")
+                    # Fallback: Try local file nếu Central down
+                    try:
+                        local_file = os.path.join(os.path.dirname(__file__), "../backend-central/data/subscriptions.json")
+                        if os.path.exists(local_file):
+                            with open(local_file, 'r', encoding='utf-8') as f:
+                                self._subscription_cache = json.load(f)
+                                self._subscription_cache_time = now
+                    except Exception as e2:
+                        print(f"⚠️ Failed to load local subscriptions: {e2}")
+                        self._subscription_cache = []
+                        self._subscription_cache_time = now
+
+            # Search trong cache
+            if not self._subscription_cache:
+                return {
+                    "is_subscriber": False,
+                    "type": None,
+                    "owner_name": None
+                }
+
+            # Normalize plate_id để so sánh (bỏ dấu gạch ngang, uppercase)
+            normalized_plate = re.sub(r'[^A-Z0-9]', '', plate_id.upper())
+
+            for sub in self._subscription_cache:
+                # Normalize subscription plate
+                sub_plate = re.sub(r'[^A-Z0-9]', '', sub.get('plate_number', '').upper())
+
+                # Check match
+                if sub_plate == normalized_plate:
+                    # Check status và expiration
+                    if sub.get('status') != 'active':
+                        return {
+                            "is_subscriber": False,
+                            "type": None,
+                            "owner_name": None,
+                            "note": f"Thuê bao hết hạn hoặc inactive"
+                        }
+
+                    # Check expiration date (nếu có)
+                    end_date = sub.get('end_date')
+                    if end_date:
+                        try:
+                            end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+                            if now > end_dt:
+                                return {
+                                    "is_subscriber": False,
+                                    "type": None,
+                                    "owner_name": None,
+                                    "note": f"Thuê bao hết hạn: {end_date}"
+                                }
+                        except:
+                            pass
+
+                    # Valid subscriber
+                    return {
+                        "is_subscriber": True,
+                        "type": sub.get('type'),
+                        "owner_name": sub.get('owner_name')
+                    }
+
+            # Not found
+            return {
+                "is_subscriber": False,
+                "type": None,
+                "owner_name": None
+            }
+
+        except Exception as e:
+            print(f"❌ Error checking subscription: {e}")
+            return {
+                "is_subscriber": False,
+                "type": None,
+                "owner_name": None
+            }
 
     def validate_plate(self, text):
         """
@@ -124,9 +235,23 @@ class ParkingManager:
                 "error": f"Xe {display_text} không có record VÀO!"
             }
 
-        # Tính duration và fee
+        # Tính duration
         duration = self.calculate_duration(entry['entry_time'], datetime.now())
-        fee = self.calculate_fee(entry['entry_time'], datetime.now())
+
+        # ===== CHECK SUBSCRIPTION - NẾU LÀ THUÊ BAO THÌ FEE = 0 =====
+        subscription_info = self.check_subscription(plate_id)
+        is_subscriber = subscription_info.get('is_subscriber', False)
+
+        if is_subscriber:
+            # Thuê bao → Miễn phí
+            fee = 0
+            customer_type = subscription_info.get('type', 'subscription')  # company, monthly
+            print(f"✅ Xe {display_text} là THUÊ BAO ({customer_type}) - Miễn phí")
+        else:
+            # Khách lẻ → Tính phí bình thường
+            fee = self.calculate_fee(entry['entry_time'], datetime.now())
+            customer_type = "regular"
+            print(f"💰 Xe {display_text} là KHÁCH LẺ - Phí: {fee:,}đ")
 
         # Update DB
         self.db.update_exit(
@@ -148,6 +273,8 @@ class ParkingManager:
             "entry_time": entry['entry_time'],
             "duration": duration,
             "fee": fee,
+            "customer_type": customer_type,  # Thêm loại khách
+            "is_subscriber": is_subscriber,  # Thêm flag subscriber
             "message": f"Xe {display_text} RA. Phí: {fee:,}đ. Thời gian: {duration}"
         }
 
