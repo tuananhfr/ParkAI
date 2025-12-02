@@ -20,6 +20,7 @@ from websocket_manager import WebSocketManager
 from parking_manager import ParkingManager
 from barrier_controller import BarrierController
 from central_sync import CentralSyncService
+from config_manager import ConfigManager
 
 # ==================== FastAPI App ====================
 app = FastAPI(title="License Plate Detection API")
@@ -40,6 +41,7 @@ websocket_manager = WebSocketManager()
 parking_manager = None
 barrier_controller = None
 central_sync = None
+config_manager = ConfigManager()
 
 # WebRTC
 pcs = set()
@@ -544,35 +546,56 @@ async def camera_info():
     })
 
 
-@app.put("/api/camera/type")
-async def update_camera_type(request: Request):
-    """Cập nhật camera type (ENTRY/EXIT)"""
+@app.get("/api/config")
+async def get_config():
+    """Lấy config hiện tại"""
+    global config_manager
     try:
-        data = await request.json()
-        new_type = data.get("type", "").upper()
-
-        # Validate
-        if new_type not in ["ENTRY", "EXIT"]:
-            return JSONResponse({
-                "success": False,
-                "error": "Invalid type. Must be ENTRY or EXIT"
-            }, status_code=400)
-
-        # Update config
-        config.CAMERA_TYPE = new_type
-
-
+        config_data = config_manager.get_config()
         return JSONResponse({
             "success": True,
-            "message": f"Camera type updated to {new_type}",
-            "camera": {
-                "id": config.CAMERA_ID,
-                "name": config.CAMERA_NAME,
-                "type": config.CAMERA_TYPE,
-                "location": config.CAMERA_LOCATION
-            }
+            "config": config_data
         })
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.post("/api/config")
+async def update_config(request: Request):
+    """Cập nhật config"""
+    global config_manager, central_sync
+    
+    try:
+        new_config = await request.json()
+        success = config_manager.update_config(new_config)
+        
+        if not success:
+            return JSONResponse({
+                "success": False,
+                "error": "Failed to update configuration"
+            }, status_code=500)
+
+        # Reload config module
+        import importlib
+        importlib.reload(config)
+        
+        # Cập nhật central_sync nếu camera_type thay đổi
+        if central_sync and "camera" in new_config and "type" in new_config["camera"]:
+            central_sync.camera_type = config.CAMERA_TYPE
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Configuration updated successfully",
+            "config": config_manager.get_config()
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JSONResponse({
             "success": False,
             "error": str(e)

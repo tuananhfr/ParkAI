@@ -1,0 +1,55 @@
+[
+  {
+    "id": 1,
+    "plate_number": "30A12345",
+    "owner_name": "Công ty ABC",
+    "type": "company",
+    "status": "active",
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31",
+    "phone": "0901234567",
+    "note": "Thẻ công ty"
+  },
+  {
+    "id": 2,
+    "plate_number": "30B67890",
+    "owner_name": "Nguyễn Văn X",
+    "type": "monthly",
+    "status": "active",
+    "start_date": "2024-01-15",
+    "end_date": "2024-02-15",
+    "phone": "0901234568",
+    "note": "Thẻ tháng"
+  },
+  {
+    "id": 3,
+    "plate_number": "30C11111",
+    "owner_name": "Trần Thị Y",
+    "type": "monthly",
+    "status": "active",
+    "start_date": "2024-01-01",
+    "end_date": "2024-02-01",
+    "phone": "0901234569",
+    "note": "Thẻ tháng"
+  },
+  {
+    "id": 4,
+    "plate_number": "30D22222",
+    "owner_name": "Lê Văn Z",
+    "type": "company",
+    "status": "active",
+    "start_date": "2024-01-01",
+    "end_date": "2024-12-31",
+    "phone": "0901234570",
+    "note": "Thẻ công ty"
+  },
+  {
+    "id": 5,
+    "plate_number": "30E33333",
+    "owner_name": "Phạm Thị W",
+    "type": "regular",
+    "status": "active",
+    "phone": "0901234571",
+    "note": "Khách lẻ - tính phí"
+  }
+]

@@ -22,6 +22,26 @@ FEE_PER_HOUR = 5000  # 5k/giờ sau 2 giờ
 FEE_OVERNIGHT = 50000  # 50k qua đêm (22h-6h)
 FEE_DAILY_MAX = 100000  # 100k tối đa 1 ngày
 
+# ==================== STAFF MANAGEMENT ====================
+# API endpoint để lấy danh sách người trực (để trống sẽ dùng file JSON local)
+STAFF_API_URL = os.getenv("STAFF_API_URL", "")  # Ví dụ: "https://api.example.com/staff"
+STAFF_JSON_FILE = "data/staff.json"  # File JSON local mặc định
+
+# ==================== SUBSCRIPTION MANAGEMENT ====================
+# API endpoint để lấy danh sách thuê bao (để trống sẽ dùng file JSON local)
+SUBSCRIPTION_API_URL = os.getenv("SUBSCRIPTION_API_URL", "")  # Ví dụ: "https://api.example.com/subscriptions"
+SUBSCRIPTION_JSON_FILE = "data/subscriptions.json"  # File JSON local mặc định
+
+# ==================== REPORT MANAGEMENT ====================
+# API endpoint để gửi báo cáo
+REPORT_API_URL = os.getenv("REPORT_API_URL", "")  # Ví dụ: "https://api.example.com/reports"
+
+# ==================== CENTRAL SERVER CONFIG ====================
+# IP/URL của máy chủ central hiện tại
+CENTRAL_SERVER_IP = os.getenv("CENTRAL_SERVER_IP", "")  # Ví dụ: "http://192.168.1.100:8000"
+# Danh sách IP/URL các máy chủ central khác để đồng bộ dữ liệu (JSON string hoặc list)
+CENTRAL_SYNC_SERVERS = os.getenv("CENTRAL_SYNC_SERVERS", "[]")  # Ví dụ: '["http://192.168.1.101:8000", "http://192.168.1.102:8000"]'
+
 # ==================== EDGE CAMERA ROUTING ====================
 # Mapping camera_id -> Edge backend URL để proxy WebRTC
 # Điền URL thực tế thông qua biến môi trường (khuyến nghị) hoặc chỉnh trực tiếp.

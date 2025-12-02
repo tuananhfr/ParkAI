@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "name": "Nguyễn Văn A",
+    "position": "Bảo vệ trưởng",
+    "phone": "0901234567",
+    "shift": "Ca ngày",
+    "status": "active"
+  },
+  {
+    "id": 2,
+    "name": "Trần Thị B",
+    "position": "Bảo vệ",
+    "phone": "0901234568",
+    "shift": "Ca đêm",
+    "status": "active"
+  },
+  {
+    "id": 3,
+    "name": "Lê Văn C",
+    "position": "Bảo vệ",
+    "phone": "0901234569",
+    "shift": "Ca ngày",
+    "status": "active"
+  },
+  {
+    "id": 4,
+    "name": "Phạm Thị D",
+    "position": "Bảo vệ",
+    "phone": "0901234570",
+    "shift": "Ca đêm",
+    "status": "active"
+  },
+  {
+    "id": 5,
+    "name": "Hoàng Văn E",
+    "position": "Bảo vệ",
+    "phone": "0901234571",
+    "shift": "Ca ngày",
+    "status": "active"
+  }
+]

@@ -792,66 +792,13 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
         </h6>
         <div className="d-flex align-items-center gap-2">
           {cameraInfo && (
-            <select
-              className={`form-select form-select-sm ${
-                cameraInfo.type === "ENTRY"
-                  ? "bg-success text-white border-success"
-                  : "bg-danger text-white border-danger"
+            <span
+              className={`badge ${
+                cameraInfo.type === "ENTRY" ? "bg-success" : "bg-danger"
               }`}
-              style={{
-                width: "auto",
-                minWidth: "80px",
-                fontWeight: "600",
-                cursor: "pointer",
-                fontSize: "0.875rem",
-                padding: "0.25rem 1.75rem 0.25rem 0.5rem",
-                borderRadius: "0.375rem",
-                border: "2px solid",
-                transition: "all 0.2s ease",
-                boxShadow: "0 2px 4px rgba(0,0,0,0.1)",
-              }}
-              value={cameraInfo.type}
-              onChange={async (e) => {
-                const newType = e.target.value;
-                try {
-                  const response = await fetch(
-                    `${controlProxy?.base_url || ""}/api/camera/type`,
-                    {
-                      method: "PUT",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ type: newType }),
-                    }
-                  );
-
-                  if (response.ok) {
-                    const data = await response.json();
-                    setCameraInfo((prev) => ({
-                      ...prev,
-                      type: data.camera.type,
-                    }));
-                  } else {
-                    e.target.value = cameraInfo.type; // Revert
-                  }
-                } catch (error) {
-                  e.target.value = cameraInfo.type; // Revert
-                }
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.transform = "scale(1.05)";
-                e.target.style.boxShadow = "0 4px 8px rgba(0,0,0,0.2)";
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.transform = "scale(1)";
-                e.target.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)";
-              }}
             >
-              <option value="ENTRY" className="bg-white text-dark">
-                VÀO
-              </option>
-              <option value="EXIT" className="bg-white text-dark">
-                RA
-              </option>
-            </select>
+              {cameraInfo.type === "ENTRY" ? "VÀO" : "RA"}
+            </span>
           )}
 
           <span
