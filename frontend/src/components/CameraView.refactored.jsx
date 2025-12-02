@@ -34,7 +34,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
   const userEditedRef = useRef(false);
   const plateTextRef = useRef("");
   const lastDetectionsRef = useRef([]);
-  const lastDetectionTimeRef = useRef(0);
+  const [lastDetectionTime, setLastDetectionTime] = useState(0);
 
   // State
   const [isConnected, setIsConnected] = useState(false);
@@ -350,7 +350,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           const detectionsData = message.data || [];
           lastDetectionsRef.current = detectionsData;
           setDetections(detectionsData);
-          lastDetectionTimeRef.current = Date.now();
+          setLastDetectionTime(Date.now());
 
           // Find detection with OCR processing
           const detectionProcessing = detectionsData.find(
@@ -398,9 +398,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
             }
             setCannotReadPlate(false);
 
-            if (notificationMessage === "🔍 Đang đọc biển số...") {
-              setNotificationMessage(null);
-            }
+            setNotificationMessage((prev) => {
+              if (prev === "🔍 Đang đọc biển số...") {
+                return null;
+              }
+              return prev;
+            });
           } else {
             if (detectionsData.length > 0) {
               if (!plateTextRef.current) {
@@ -429,7 +432,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
       clearInterval(pingInterval);
       ws.close();
     };
-  }, [controlProxy?.ws_url, camera?.id, showEditModal, notificationMessage]);
+  }, [controlProxy?.ws_url, camera?.id, showEditModal]);
 
   // Fetch barrier status on mount
   useEffect(() => {
@@ -709,7 +712,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           canvasRef={canvasRef}
           isVideoLoaded={isVideoLoaded}
           detections={detections}
-          lastDetectionTime={lastDetectionTimeRef.current}
+          lastDetectionTime={lastDetectionTime}
           onFullscreenToggle={toggleFullscreen}
           isFullscreen={isFullscreen}
         />
@@ -748,7 +751,10 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           </div>
         )}
 
-        <Notification message={notificationMessage} isFullscreen={isFullscreen} />
+        <Notification
+          message={notificationMessage}
+          isFullscreen={isFullscreen}
+        />
 
         <BarrierControls
           barrierStatus={barrierStatus}
@@ -779,4 +785,3 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
 };
 
 export default CameraView;
-

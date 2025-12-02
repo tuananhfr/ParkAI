@@ -1,33 +1,20 @@
+/**
+ * CameraView - Component chính hiển thị camera và xử lý vào/ra
+ * Đã được refactor để sử dụng các component và hooks nhỏ hơn
+ */
 import { useEffect, useRef, useState } from "react";
 import { CENTRAL_URL } from "../config";
+import { validatePlateNumber } from "../utils/plateValidation";
 
-const formatTime = (date) =>
-  date.toLocaleString("vi-VN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-
-// Validate biển số Việt Nam
-const validatePlateNumber = (plateText) => {
-  if (!plateText || plateText.trim().length < 5) {
-    return false;
-  }
-
-  const normalizedPlate = plateText
-    .trim()
-    .toUpperCase()
-    .replace(/[-.\s]/g, "");
-
-  // Format biển số Việt Nam: 2 số + 1-2 chữ cái + 4-6 số
-  // VD: 30A12345, 30AB1234, 29A123456
-  const platePattern = /^[0-9]{2}[A-Z]{1,2}[0-9]{4,6}$/;
-
-  return platePattern.test(normalizedPlate);
-};
+// Import components
+import CameraHeader from "./CameraHeader";
+import VideoStream from "./VideoStream";
+import PlateImage from "./PlateImage";
+import PlateInput from "./PlateInput";
+import VehicleInfo from "./VehicleInfo";
+import BarrierControls from "./BarrierControls";
+import EditPlateModal from "./EditPlateModal";
+import Notification from "./Notification";
 
 const CameraView = ({ camera, onHistoryUpdate }) => {
   const streamProxy = camera?.stream_proxy;
@@ -37,18 +24,19 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     streamProxy?.default_mode === "annotated" &&
     streamProxy?.supports_annotated !== false;
 
+  // Refs
   const containerRef = useRef(null);
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const peerRef = useRef(null);
   const wsRef = useRef(null);
-  const animationFrameRef = useRef(null);
-  const lastDetectionsRef = useRef([]);
-  const lastDetectionTimeRef = useRef(0);
   const retryRef = useRef(null);
   const userEditedRef = useRef(false);
   const plateTextRef = useRef("");
+  const lastDetectionsRef = useRef([]);
+  const [lastDetectionTime, setLastDetectionTime] = useState(0);
 
+  // State
   const [isConnected, setIsConnected] = useState(false);
   const [isVideoLoaded, setIsVideoLoaded] = useState(false);
   const [error, setError] = useState(null);
@@ -56,9 +44,9 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
   const [plateText, setPlateText] = useState("");
   const [plateSource, setPlateSource] = useState("");
   const [plateConfidence, setPlateConfidence] = useState(0);
-  const [plateImage, setPlateImage] = useState(null); // Ảnh biển số cắt từ detection
+  const [plateImage, setPlateImage] = useState(null);
   const [cannotReadPlate, setCannotReadPlate] = useState(false);
-  const [plateValid, setPlateValid] = useState(true); // Biển số có hợp lệ không
+  const [plateValid, setPlateValid] = useState(true);
   const [isOpening, setIsOpening] = useState(false);
   const [cameraInfo, setCameraInfo] = useState({
     name: camera?.name,
@@ -66,7 +54,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     location: camera?.location,
   });
   const [userEdited, setUserEdited] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [barrierStatus, setBarrierStatus] = useState({
     is_open: false,
@@ -83,8 +70,8 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     is_subscriber: false,
   });
   const [showEditModal, setShowEditModal] = useState(false);
-  const [editPlateText, setEditPlateText] = useState("");
 
+  // Update camera info when camera changes
   useEffect(() => {
     setCameraInfo({
       name: camera?.name,
@@ -93,6 +80,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     });
   }, [camera?.name, camera?.type, camera?.location]);
 
+  // Sync refs with state
   useEffect(() => {
     userEditedRef.current = userEdited;
   }, [userEdited]);
@@ -101,11 +89,10 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     plateTextRef.current = plateText;
   }, [plateText]);
 
-  // Fetch vehicle info từ history khi có biển số
+  // Fetch vehicle info when plate text changes
   useEffect(() => {
     const fetchVehicleInfo = async () => {
       if (!plateText || plateText.trim().length < 5) {
-        // Reset vehicle info nếu không có biển số hợp lệ
         setVehicleInfo({
           entry_time: null,
           exit_time: null,
@@ -118,14 +105,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
       }
 
       try {
-        // Tìm trong history theo plate_id hoặc plate_view
         const response = await fetch(
           `${CENTRAL_URL}/api/parking/history?limit=100&today_only=false`
         );
         const data = await response.json();
 
         if (data.success && data.history) {
-          // Tìm vehicle gần nhất với biển số này
           const normalizedPlate = plateText.trim().toUpperCase();
           const vehicle = data.history.find(
             (entry) =>
@@ -146,7 +131,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               is_subscriber: vehicle.is_subscriber || false,
             });
           } else {
-            // Không tìm thấy, giữ nguyên hoặc reset
             setVehicleInfo({
               entry_time: null,
               exit_time: null,
@@ -158,38 +142,42 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           }
         }
       } catch (err) {
-        // Lỗi thì không làm gì, giữ nguyên vehicleInfo hiện tại
+        // Silent fail
       }
     };
 
-    // Debounce để tránh fetch quá nhiều
     const timeoutId = setTimeout(fetchVehicleInfo, 500);
     return () => clearTimeout(timeoutId);
   }, [plateText]);
 
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const draw = () => {
-      drawDetections();
-      animationFrameRef.current = requestAnimationFrame(draw);
-    };
-
-    draw();
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
+  // WebRTC connection logic
   useEffect(() => {
     let cancelled = false;
+
+    const cleanupRetry = () => {
+      if (retryRef.current) {
+        clearTimeout(retryRef.current);
+        retryRef.current = null;
+      }
+    };
+
+    const cleanupPeer = () => {
+      if (peerRef.current) {
+        peerRef.current.ontrack = null;
+        peerRef.current.onconnectionstatechange = null;
+        peerRef.current.close();
+        peerRef.current = null;
+      }
+    };
+
+    const cleanupVideo = () => {
+      if (videoRef.current?.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach((track) => track.stop());
+        videoRef.current.srcObject = null;
+      }
+      setIsVideoLoaded(false);
+    };
 
     cleanupRetry();
     cleanupPeer();
@@ -300,7 +288,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
       cleanupPeer();
       cleanupVideo();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     camera?.id,
     camera?.status,
@@ -310,7 +297,15 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     wantsAnnotated,
   ]);
 
+  // WebSocket for detections and barrier status
   useEffect(() => {
+    const cleanupWebSocket = () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+
     cleanupWebSocket();
 
     if (!controlProxy?.ws_url) {
@@ -341,12 +336,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
 
         const message = JSON.parse(data);
 
-        // Handle barrier status updates (PUSH từ backend, không polling!)
+        // Handle barrier status updates
         if (message.type === "barrier_status") {
           const status = message.data || {};
           setBarrierStatus({
             is_open: status.is_open || false,
-            enabled: status.enabled !== undefined ? status.enabled : true, // Default enabled = true
+            enabled: status.enabled !== undefined ? status.enabled : true,
           });
           return;
         }
@@ -355,61 +350,50 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           const detectionsData = message.data || [];
           lastDetectionsRef.current = detectionsData;
           setDetections(detectionsData);
-          lastDetectionTimeRef.current = Date.now();
+          setLastDetectionTime(Date.now());
 
-          // ========== FLOW MỚI: XỬ LÝ 2 BƯỚC (ẢNH TRƯỚC, TEXT SAU) ==========
-
-          // Tìm detection có OCR đang xử lý (có ảnh, chưa có text)
+          // Find detection with OCR processing
           const detectionProcessing = detectionsData.find(
             (det) => det.ocr_status === "processing" && det.plate_image
           );
 
-          // Tìm detection đã OCR xong (có text + finalized)
-          const detectionWithFinalized = detectionsData.find(
-            (det) => det.text && det.finalized === true
-          );
+          // Find detection with finalized text
           const detectionWithText = detectionsData.find((det) => det.text);
-
           const normalizedPlate = detectionWithText?.text
             ?.trim()
             ?.toUpperCase();
-          const finalizedPlate = detectionWithFinalized?.text
-            ?.trim()
-            ?.toUpperCase();
 
-          // BƯỚC 1: Nhận ảnh (chưa có text) - Hiển thị "Đang đọc biển số..."
+          // Step 1: Show image while processing
           if (detectionProcessing && !normalizedPlate) {
             setPlateImage(detectionProcessing.plate_image);
             setNotificationMessage("🔍 Đang đọc biển số...");
             setCannotReadPlate(false);
 
-            // Clear notification sau 2s nếu không có update
             setTimeout(() => {
-              if (notificationMessage === "🔍 Đang đọc biển số...") {
-                setNotificationMessage(null);
-              }
+              setNotificationMessage((prev) => {
+                if (prev === "🔍 Đang đọc biển số...") {
+                  return null;
+                }
+                return prev;
+              });
             }, 2000);
           }
 
-          // BƯỚC 2: Nhận text sau khi OCR xong
+          // Step 2: Process finalized text
           if (normalizedPlate) {
-            // BƯỚC 3: VALIDATE FORMAT - Chỉ hiển thị nếu đúng format
             const isValidFormat = validatePlateNumber(normalizedPlate);
 
             if (!isValidFormat) {
-              // Biển số sai format → KHÔNG LÀM GÌ (không hiển thị, không cảnh báo)
-              // Chỉ bỏ qua và chờ lần quét tiếp theo
+              // Invalid format - ignore silently
               return;
             }
 
-            // Biển số đúng format → Hiển thị lên input
+            // Valid format - update UI
             setPlateValid(true);
-            // Cập nhật ảnh biển số cắt từ detection (nếu có)
             if (detectionWithText?.plate_image) {
               setPlateImage(detectionWithText.plate_image);
             }
 
-            // Chỉ cập nhật nếu user không đang edit trong modal
             if (!userEditedRef.current && !showEditModal) {
               setPlateText(normalizedPlate);
               setPlateSource("auto");
@@ -417,12 +401,13 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
             }
             setCannotReadPlate(false);
 
-            // Clear "Đang đọc biển số..." notification
-            if (notificationMessage === "🔍 Đang đọc biển số...") {
-              setNotificationMessage(null);
-            }
+            setNotificationMessage((prev) => {
+              if (prev === "🔍 Đang đọc biển số...") {
+                return null;
+              }
+              return prev;
+            });
           } else {
-            // Không detect được plate
             if (detectionsData.length > 0) {
               if (!plateTextRef.current) {
                 setCannotReadPlate(true);
@@ -430,10 +415,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
             }
           }
         }
-      } catch (err) {}
+      } catch (err) {
+        // Silent fail
+      }
     };
 
-    ws.onerror = (err) => {};
+    ws.onerror = () => {};
 
     ws.onclose = () => {
       clearInterval(pingInterval);
@@ -448,99 +435,96 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
       clearInterval(pingInterval);
       ws.close();
     };
-  }, [controlProxy?.ws_url, camera?.id]);
+  }, [controlProxy?.ws_url, camera?.id, showEditModal]);
 
-  const cleanupPeer = () => {
-    if (peerRef.current) {
-      peerRef.current.ontrack = null;
-      peerRef.current.onconnectionstatechange = null;
-      peerRef.current.close();
-      peerRef.current = null;
-    }
-  };
+  // Fetch barrier status on mount
+  useEffect(() => {
+    if (!controlProxy?.barrier_status_url) return;
 
-  const cleanupVideo = () => {
-    if (videoRef.current?.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach((track) => track.stop());
-      videoRef.current.srcObject = null;
-    }
-    setIsVideoLoaded(false);
-  };
-
-  const cleanupRetry = () => {
-    if (retryRef.current) {
-      clearTimeout(retryRef.current);
-      retryRef.current = null;
-    }
-  };
-
-  const cleanupWebSocket = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-  };
-
-  const drawDetections = () => {
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
-
-    if (!canvas || !video || video.videoWidth === 0) return;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    const ctx = canvas.getContext("2d");
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const now = Date.now();
-    if (now - lastDetectionTimeRef.current > 1000) {
-      // ========== XE RA KHỎI TẦM CAM (detection timeout > 1s) ==========
-      // KHÔNG RESET TEXT - Giữ lại text đã OCR để user có thể mở/đóng cửa
-      // Chỉ clear detections để không vẽ boxes nữa
-
-      lastDetectionsRef.current = [];
-      setDetections([]);
-      setCannotReadPlate(false);
-
-      // KHÔNG reset plateText, plateSource, plateConfidence, plateImage
-      // Giữ lại để user có thể mở/đóng cửa ngay cả khi xe đã đi qua
-
-      return;
-    }
-
-    lastDetectionsRef.current.forEach((detection) => {
-      const [x, y, w, h] = detection.bbox;
-      let label = detection.class;
-      if (detection.text) {
-        label = `${detection.class}: ${detection.text}`;
+    const fetchBarrierStatus = async () => {
+      try {
+        const response = await fetch(controlProxy.barrier_status_url);
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success) {
+            setBarrierStatus({
+              is_open: result.is_open || false,
+              enabled: result.enabled || false,
+            });
+          }
+        }
+      } catch (err) {
+        // Silent fail
       }
-      label += ` (${((detection.confidence || 0) * 100).toFixed(0)}%)`;
+    };
 
-      const color = detection.text ? "#00FF00" : "#0000FF";
+    fetchBarrierStatus();
+  }, [controlProxy?.barrier_status_url]);
 
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, w, h);
+  // Auto-open barrier when valid plate detected
+  useEffect(() => {
+    const shouldAutoOpen =
+      !isOpening &&
+      !showEditModal &&
+      plateText.trim() &&
+      controlProxy?.open_barrier_url &&
+      !barrierStatus.is_open &&
+      plateValid;
 
-      ctx.font = "bold 12px Arial";
-      const textWidth = ctx.measureText(label).width;
+    if (shouldAutoOpen) {
+      const timeoutId = setTimeout(() => {
+        handleOpenBarrier();
+      }, 500);
 
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y - 20, textWidth + 10, 20);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [
+    isOpening,
+    showEditModal,
+    plateText,
+    controlProxy?.open_barrier_url,
+    barrierStatus.is_open,
+    plateValid,
+  ]);
 
-      ctx.fillStyle = "#FFFFFF";
-      ctx.fillText(label, x + 5, y - 5);
-    });
+  // Fullscreen handling
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentFullscreen =
+        document.fullscreenElement === containerRef.current;
+      setIsFullscreen(isCurrentFullscreen);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = async () => {
+    const containerEl = containerRef.current;
+    if (!containerEl) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        if (containerEl.requestFullscreen) {
+          await containerEl.requestFullscreen();
+        } else {
+          setIsFullscreen(true);
+        }
+      } else if (document.exitFullscreen) {
+        await document.exitFullscreen();
+      } else {
+        setIsFullscreen(false);
+      }
+    } catch (err) {
+      setIsFullscreen((prev) => !prev);
+    }
   };
-
-  // Bỏ countdown - user sẽ click button đóng cửa thủ công
 
   const closeBarrier = async () => {
     if (!controlProxy?.base_url && !controlProxy?.open_barrier_url) return;
 
-    // Sử dụng base_url nếu có, nếu không thì parse từ open_barrier_url
     const baseUrl =
       controlProxy.base_url ||
       controlProxy.open_barrier_url.replace("/api/open-barrier", "");
@@ -555,11 +539,9 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
       const result = await response.json();
 
       if (result.success) {
-        // Cập nhật barrier status NGAY từ API response (optimistic update)
-        // Luôn set is_open = false khi đóng cửa thành công
         setBarrierStatus({
           is_open: result.is_open !== undefined ? result.is_open : false,
-          enabled: true, // Luôn set enabled = true
+          enabled: true,
         });
 
         setNotificationMessage("✅ Barrier đã đóng thành công!");
@@ -567,13 +549,13 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           setNotificationMessage(null);
         }, 3000);
 
-        // ========== RESET TẤT CẢ SAU KHI ĐÓNG BARRIER VÀ LƯU DB ==========
+        // Reset all state
         setPlateText("");
         setPlateSource("");
         setPlateConfidence(0);
-        setPlateImage(null); // Xóa ảnh biển số
-        setDetections([]); // Xóa box detection
-        lastDetectionsRef.current = []; // Xóa detection cache
+        setPlateImage(null);
+        setDetections([]);
+        lastDetectionsRef.current = [];
         setPlateValid(true);
         setCannotReadPlate(false);
         setUserEdited(false);
@@ -587,7 +569,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
         }, 5000);
       }
 
-      // Reset state
       setBarrierOpenedPlate(null);
     } catch (err) {
       setNotificationMessage(`Lỗi kết nối: ${err.message}`);
@@ -637,13 +618,10 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
       const result = await response.json();
 
       if (result.success) {
-        // Kiểm tra barrier status từ response
         if (result.barrier_opened) {
-          // Cập nhật barrier status NGAY từ API response (optimistic update)
-          // Không cần chờ WebSocket message
           setBarrierStatus({
             is_open: true,
-            enabled: true, // Luôn set enabled = true khi mở thành công
+            enabled: true,
           });
 
           setNotificationMessage(
@@ -653,7 +631,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           setNotificationMessage(result.message || "✅ Đã xác nhận thành công");
         }
 
-        // Lưu thông tin vehicle từ response (ưu tiên vehicle_info object từ backend)
         const vehicleData = result.vehicle_info || result;
         if (
           vehicleData.entry_time ||
@@ -676,10 +653,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           setNotificationMessage(null);
         }, 3000);
 
-        // Lưu biển số đã mở cửa để track
         setBarrierOpenedPlate(normalizedPlate);
-
-        // Không reset plate text - giữ lại để user có thể đóng cửa
 
         if (typeof onHistoryUpdate === "function") {
           onHistoryUpdate();
@@ -700,120 +674,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     }
   };
 
-  // Fetch barrier status ONCE on mount (để có initial state)
-  useEffect(() => {
-    if (!controlProxy?.barrier_status_url) return;
-
-    const fetchBarrierStatus = async () => {
-      try {
-        const response = await fetch(controlProxy.barrier_status_url);
-        if (response.ok) {
-          const result = await response.json();
-          if (result.success) {
-            setBarrierStatus({
-              is_open: result.is_open || false,
-              enabled: result.enabled || false,
-            });
-          }
-        }
-      } catch (err) {}
-    };
-
-    // CHỈ fetch 1 LẦN khi mount - không polling!
-    fetchBarrierStatus();
-
-    // KHÔNG CÒN setInterval - updates qua WebSocket!
-  }, [controlProxy?.barrier_status_url]);
-
-  // ========== TỰ ĐỘNG MỞ BARRIER KHI CÓ BIỂN SỐ HỢP LỆ ==========
-  useEffect(() => {
-    // Kiểm tra tất cả điều kiện giống button "Mở barrier"
-    // KHÔNG tự động mở khi user đang edit trong modal
-    const shouldAutoOpen =
-      !isOpening &&
-      !showEditModal &&
-      plateText.trim() &&
-      controlProxy?.open_barrier_url &&
-      !barrierStatus.is_open &&
-      plateValid;
-
-    if (shouldAutoOpen) {
-      // Debounce 500ms để tránh call API liên tục khi OCR đang cập nhật
-      const timeoutId = setTimeout(() => {
-        handleOpenBarrier();
-      }, 500);
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [
-    isOpening,
-    showEditModal,
-    plateText,
-    controlProxy?.open_barrier_url,
-    barrierStatus.is_open,
-    plateValid,
-  ]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const isCurrentFullscreen =
-        document.fullscreenElement === containerRef.current;
-      setIsFullscreen(isCurrentFullscreen);
-    };
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
-  }, []);
-
-  const toggleFullscreen = async () => {
-    const containerEl = containerRef.current;
-    if (!containerEl) return;
-
-    try {
-      if (!document.fullscreenElement) {
-        if (containerEl.requestFullscreen) {
-          await containerEl.requestFullscreen();
-        } else {
-          setIsFullscreen(true);
-        }
-      } else if (document.exitFullscreen) {
-        await document.exitFullscreen();
-      } else {
-        setIsFullscreen(false);
-      }
-    } catch (err) {
-      setIsFullscreen((prev) => !prev);
-    }
-  };
-
-  const handleConfirmEdit = () => {
-    const normalizedPlate = editPlateText.trim().toUpperCase();
-
-    if (!normalizedPlate || normalizedPlate.length < 5) {
-      setNotificationMessage("⚠️ Biển số phải có ít nhất 5 ký tự!");
-      setTimeout(() => {
-        setNotificationMessage(null);
-      }, 3000);
-      return;
-    }
-
-    // Validate biển số cơ bản (có thể mở rộng thêm)
-    const platePattern = /^[0-9]{2}[A-Z]{1,2}[0-9]{4,6}$/;
-    const cleanPlate = normalizedPlate.replace(/[-.\s]/g, "");
-
-    if (!platePattern.test(cleanPlate)) {
-      setNotificationMessage(
-        "⚠️ Biển số không hợp lệ! Vui lòng nhập đúng định dạng (VD: 30A12345)"
-      );
-      setTimeout(() => {
-        setNotificationMessage(null);
-      }, 3000);
-      return;
-    }
-
-    // Cập nhật biển số sau khi validate thành công
+  const handleConfirmEdit = (normalizedPlate) => {
     setPlateText(normalizedPlate);
     plateTextRef.current = normalizedPlate;
     setUserEdited(true);
@@ -821,7 +682,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     setPlateSource("manual");
     setPlateValid(true);
     setShowEditModal(false);
-    setEditPlateText("");
 
     setNotificationMessage("✅ Đã cập nhật biển số!");
     setTimeout(() => {
@@ -839,112 +699,26 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
         isFullscreen ? { backgroundColor: "#000", borderRadius: 0 } : undefined
       }
     >
-      <div
-        className={`card-header bg-primary text-white d-flex justify-content-between align-items-center py-2 px-3 ${
-          isFullscreen ? "d-none" : ""
-        }`}
-      >
-        <h6 className="mb-0 small">
-          <i className="bi bi-camera-video-fill me-1"></i>
-          {cameraInfo?.name || `Camera #${camera?.id}`}
-        </h6>
-        <div className="d-flex align-items-center gap-2">
-          {cameraInfo && (
-            <span
-              className={`badge ${
-                cameraInfo.type === "ENTRY" ? "bg-success" : "bg-danger"
-              }`}
-            >
-              {cameraInfo.type === "ENTRY" ? "VÀO" : "RA"}
-            </span>
-          )}
-
-          <span
-            className={`badge ${
-              barrierStatus.is_open ? "bg-warning" : "bg-secondary"
-            }`}
-            title={
-              barrierStatus.is_open ? "Barrier đang mở" : "Barrier đang đóng"
-            }
-          >
-            <i
-              className={`bi ${
-                barrierStatus.is_open
-                  ? "bi-door-open-fill"
-                  : "bi-door-closed-fill"
-              } me-1`}
-            ></i>
-            {barrierStatus.is_open ? "MỞ" : "ĐÓNG"}
-          </span>
-
-          <i
-            className={`bi bi-circle-fill fs-6 ${
-              isConnected ? "text-success" : "text-secondary"
-            }`}
-          ></i>
-        </div>
-      </div>
+      <CameraHeader
+        cameraInfo={cameraInfo}
+        barrierStatus={barrierStatus}
+        isConnected={isConnected}
+        isFullscreen={isFullscreen}
+      />
 
       <div
         className="card-body p-0"
         style={{ flex: "1 1 auto", minHeight: 0, overflow: "hidden" }}
       >
-        <div className="position-relative bg-black h-100">
-          {!isVideoLoaded && (
-            <div
-              className="position-absolute top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center"
-              style={{ backgroundColor: "#1a1a1a", zIndex: 10 }}
-            >
-              <div
-                className="spinner-border text-primary mb-3"
-                role="status"
-                style={{ width: "3rem", height: "3rem" }}
-              >
-                <span className="visually-hidden">Loading...</span>
-              </div>
-            </div>
-          )}
-
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-100 h-100 d-block"
-            style={{
-              objectFit: "contain",
-              opacity: isVideoLoaded ? 1 : 0,
-              transition: "opacity 0.3s ease-in-out",
-            }}
-          />
-
-          <canvas
-            ref={canvasRef}
-            className="position-absolute top-0 start-0"
-            style={{
-              pointerEvents: "none",
-              width: "100%",
-              height: "100%",
-              imageRendering: "crisp-edges",
-              opacity: isVideoLoaded ? 1 : 0,
-              transition: "opacity 0.3s ease-in-out",
-            }}
-          />
-
-          <button
-            type="button"
-            className="btn btn-light btn-sm position-absolute"
-            style={{ bottom: "10px", right: "10px", zIndex: 30, opacity: 0.9 }}
-            onClick={toggleFullscreen}
-            title={isFullscreen ? "Thu nhỏ" : "Phóng to"}
-          >
-            <i
-              className={`bi ${
-                isFullscreen ? "bi-fullscreen-exit" : "bi-fullscreen"
-              }`}
-            ></i>
-          </button>
-        </div>
+        <VideoStream
+          videoRef={videoRef}
+          canvasRef={canvasRef}
+          isVideoLoaded={isVideoLoaded}
+          detections={detections}
+          lastDetectionTime={lastDetectionTime}
+          onFullscreenToggle={toggleFullscreen}
+          isFullscreen={isFullscreen}
+        />
       </div>
 
       <div
@@ -955,199 +729,21 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           Thông tin xe
         </h6>
 
-        {/* Ảnh biển số - LUÔN HIỂN THỊ (empty hoặc có ảnh) */}
-        <div className="mb-2 text-center">
-          <label className="form-label small mb-1 text-secondary d-block">
-            <i className="bi bi-image-fill me-1"></i>
-            Ảnh biển số đã phát hiện
-          </label>
-          <div
-            className="d-inline-block p-1 bg-white border border-2 rounded"
-            style={{
-              maxWidth: "100%",
-              minHeight: "60px",
-              minWidth: "150px",
-              borderColor: plateImage ? "#0d6efd" : "#dee2e6",
-              transition: "border-color 0.3s ease",
-            }}
-          >
-            {plateImage ? (
-              <img
-                src={plateImage}
-                alt="Cropped plate"
-                style={{
-                  maxWidth: "100%",
-                  height: "auto",
-                  maxHeight: "80px",
-                  display: "block",
-                  imageRendering: "crisp-edges",
-                }}
-              />
-            ) : (
-              <div
-                className="d-flex align-items-center justify-content-center text-muted"
-                style={{ minHeight: "60px" }}
-              >
-                <div className="text-center">
-                  <i className="bi bi-image fs-4 opacity-25"></i>
-                  <div className="small mt-1" style={{ fontSize: "0.7rem" }}>
-                    Chờ phát hiện...
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          {plateImage && (
-            <small
-              className="text-muted d-block mt-0"
-              style={{ fontSize: "0.65rem" }}
-            >
-              Vùng ảnh được OCR phân tích
-            </small>
-          )}
-        </div>
+        <PlateImage plateImage={plateImage} isFullscreen={isFullscreen} />
 
-        <div className="mb-2">
-          <label className="form-label small mb-1 text-secondary">
-            Biển số xe
-          </label>
-          <div className="input-group input-group-sm">
-            <input
-              type="text"
-              value={plateText}
-              readOnly
-              className="form-control text-center fw-bold text-uppercase"
-              placeholder="Chờ quét hoặc nhập tay..."
-              style={{
-                fontSize: "0.875rem",
-                letterSpacing: "1px",
-                padding: "0.25rem 0.5rem",
-                backgroundColor: plateSource === "auto" ? "#f8f9fa" : "#fff3cd",
-              }}
-            />
-            <button
-              type="button"
-              className="btn btn-outline-primary"
-              onClick={() => {
-                setEditPlateText(plateText);
-                setShowEditModal(true);
-              }}
-              title="Nhập biển số thủ công"
-              style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem" }}
-            >
-              <i className="bi bi-pencil-fill"></i>
-            </button>
-            {plateSource === "manual" && (
-              <span
-                className="input-group-text bg-warning text-dark px-2"
-                style={{ fontSize: "0.75rem" }}
-                title="Biển số đã nhập thủ công"
-              >
-                <i className="bi bi-hand-index-thumb-fill"></i>
-              </span>
-            )}
-          </div>
-        </div>
+        <PlateInput
+          plateText={plateText}
+          plateSource={plateSource}
+          onEditClick={() => setShowEditModal(true)}
+          isFullscreen={isFullscreen}
+        />
 
-        {/* Thông tin chi tiết - Tối ưu không gian */}
-        <div className="mb-2">
-          {/* Hàng 1: Vào + Loại khách */}
-          <div className="d-flex justify-content-between align-items-center mb-1">
-            <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-              {vehicleInfo.entry_time ? (
-                <>
-                  <i
-                    className="bi bi-arrow-down-circle text-success me-1"
-                    style={{ fontSize: "0.7rem" }}
-                  ></i>
-                  Vào: {vehicleInfo.entry_time}
-                </>
-              ) : (
-                <>
-                  <i
-                    className="bi bi-arrow-down-circle me-1"
-                    style={{ fontSize: "0.7rem", opacity: 0.5 }}
-                  ></i>
-                  Vào: Chưa có
-                </>
-              )}
-            </div>
-            <div className="d-flex align-items-center gap-1">
-              <span className="text-muted" style={{ fontSize: "0.7rem" }}>
-                <i className="bi bi-person-fill me-1"></i>Loại:
-              </span>
-              {vehicleInfo.is_subscriber ? (
-                <span
-                  className="badge bg-success"
-                  style={{ fontSize: "0.7rem" }}
-                  title="Thuê bao - Miễn phí"
-                >
-                  <i className="bi bi-star-fill me-1"></i>
-                  {vehicleInfo.customer_type === "company"
-                    ? "Công ty"
-                    : vehicleInfo.customer_type === "monthly"
-                    ? "Thẻ tháng"
-                    : "Thuê bao"}
-                </span>
-              ) : vehicleInfo.customer_type ? (
-                <span className="badge bg-info" style={{ fontSize: "0.7rem" }}>
-                  {vehicleInfo.customer_type}
-                </span>
-              ) : (
-                <span
-                  className="badge bg-secondary"
-                  style={{ fontSize: "0.7rem", opacity: 0.5 }}
-                >
-                  Khách lẻ
-                </span>
-              )}
-            </div>
-          </div>
+        <VehicleInfo
+          vehicleInfo={vehicleInfo}
+          cameraType={cameraInfo?.type}
+          isFullscreen={isFullscreen}
+        />
 
-          {/* Hàng 2: Ra + Giá vé (chỉ ở cổng EXIT) */}
-          {cameraInfo?.type === "EXIT" && (
-            <div className="d-flex justify-content-between align-items-center">
-              <div className="text-muted" style={{ fontSize: "0.75rem" }}>
-                {vehicleInfo.exit_time ? (
-                  <>
-                    <i
-                      className="bi bi-arrow-up-circle text-danger me-1"
-                      style={{ fontSize: "0.7rem" }}
-                    ></i>
-                    Ra: {vehicleInfo.exit_time}
-                  </>
-                ) : (
-                  <>
-                    <i
-                      className="bi bi-arrow-up-circle me-1"
-                      style={{ fontSize: "0.7rem", opacity: 0.5 }}
-                    ></i>
-                    Ra: Chưa có
-                  </>
-                )}
-              </div>
-              <div className="text-end">
-                <div
-                  className={
-                    vehicleInfo.fee > 0 ? "fw-bold text-success" : "text-muted"
-                  }
-                  style={{ fontSize: "0.85rem" }}
-                >
-                  {(vehicleInfo.fee || 0).toLocaleString("vi-VN")}
-                  <strong>đ</strong>
-                </div>
-                {vehicleInfo.duration && (
-                  <div className="text-muted" style={{ fontSize: "0.65rem" }}>
-                    <i className="bi bi-clock me-1"></i>
-                    {vehicleInfo.duration}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Thông báo không đọc được biển số */}
         {cannotReadPlate && (
           <div
             className="alert alert-warning mb-2 py-2 px-3"
@@ -1158,61 +754,17 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           </div>
         )}
 
-        {/* Thông báo */}
-        {notificationMessage && (
-          <div
-            className={`alert ${
-              notificationMessage?.includes("✅") ||
-              notificationMessage?.includes("thành công") ||
-              notificationMessage?.includes("🚪 Cửa đã mở")
-                ? "alert-success"
-                : notificationMessage?.includes("❌") ||
-                  notificationMessage?.includes("Lỗi") ||
-                  notificationMessage?.includes("Không thể")
-                ? "alert-danger"
-                : notificationMessage?.includes("🔒") ||
-                  notificationMessage?.includes("Đang đóng")
-                ? "alert-info"
-                : "alert-info"
-            } mb-2 py-2 px-3`}
-            style={{ fontSize: "0.9rem" }}
-          >
-            <div className="d-flex align-items-center">
-              <i
-                className={`bi me-2 ${
-                  notificationMessage?.includes("✅") ||
-                  notificationMessage?.includes("thành công") ||
-                  notificationMessage?.includes("🚪 Cửa đã mở")
-                    ? "bi-check-circle-fill"
-                    : notificationMessage?.includes("❌") ||
-                      notificationMessage?.includes("Lỗi") ||
-                      notificationMessage?.includes("Không thể")
-                    ? "bi-exclamation-triangle-fill"
-                    : notificationMessage?.includes("🔒") ||
-                      notificationMessage?.includes("Đang đóng")
-                    ? "bi-lock-fill"
-                    : "bi-info-circle-fill"
-                }`}
-              ></i>
-              <span>{notificationMessage}</span>
-            </div>
-          </div>
-        )}
+        <Notification
+          message={notificationMessage}
+          isFullscreen={isFullscreen}
+        />
 
-        {/* 2 BUTTON ĐÓNG BARRIER */}
-        <div className="d-flex gap-2 mt-2">
-          <button
-            className="btn btn-danger flex-fill"
-            onClick={closeBarrier}
-            disabled={
-              isOpening || !barrierStatus.is_open // Disable khi barrier đang đóng
-            }
-            style={{ fontSize: "1rem", padding: "10px" }}
-          >
-            <i className="bi bi-door-closed-fill me-2"></i>
-            Đóng barrier
-          </button>
-        </div>
+        <BarrierControls
+          barrierStatus={barrierStatus}
+          isOpening={isOpening}
+          onCloseBarrier={closeBarrier}
+          isFullscreen={isFullscreen}
+        />
       </div>
 
       {error && (
@@ -1224,84 +776,13 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
         </div>
       )}
 
-      {/* Modal nhập biển số thủ công */}
-      {showEditModal && (
-        <div
-          className="modal show d-block"
-          style={{ backgroundColor: "rgba(0,0,0,0.5)" }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setShowEditModal(false);
-            }
-          }}
-        >
-          <div
-            className="modal-dialog modal-dialog-centered"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-content">
-              <div className="modal-header bg-primary text-white">
-                <h6 className="modal-title mb-0">
-                  <i className="bi bi-pencil-fill me-2"></i>
-                  Nhập biển số xe thủ công
-                </h6>
-                <button
-                  type="button"
-                  className="btn-close btn-close-white"
-                  onClick={() => setShowEditModal(false)}
-                ></button>
-              </div>
-              <div className="modal-body">
-                <div className="mb-3">
-                  <label className="form-label">
-                    <i className="bi bi-123 me-1"></i>
-                    Biển số xe
-                  </label>
-                  <input
-                    type="text"
-                    className="form-control form-control-lg text-center fw-bold text-uppercase"
-                    value={editPlateText}
-                    onChange={(e) =>
-                      setEditPlateText(e.target.value.toUpperCase())
-                    }
-                    placeholder="VD: 30A12345"
-                    style={{
-                      fontSize: "1.2rem",
-                      letterSpacing: "2px",
-                    }}
-                    onKeyPress={(e) => {
-                      if (e.key === "Enter") {
-                        handleConfirmEdit();
-                      }
-                    }}
-                    autoFocus
-                  />
-                  <small className="text-muted">
-                    Nhập biển số và nhấn Enter hoặc click "Xác nhận"
-                  </small>
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowEditModal(false)}
-                >
-                  Hủy
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={handleConfirmEdit}
-                >
-                  <i className="bi bi-check-circle-fill me-1"></i>
-                  Xác nhận
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <EditPlateModal
+        show={showEditModal}
+        initialPlateText={plateText}
+        onClose={() => setShowEditModal(false)}
+        onConfirm={handleConfirmEdit}
+        onNotification={setNotificationMessage}
+      />
     </div>
   );
 };
