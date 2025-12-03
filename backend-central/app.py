@@ -2,6 +2,7 @@
 Central Backend Server - Tổng hợp data từ tất cả Edge cameras
 """
 from typing import Any, Dict, Set
+import socket
 
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,16 @@ from database import CentralDatabase
 from parking_state import ParkingStateManager
 from camera_registry import CameraRegistry
 from config_manager import ConfigManager
+
+# P2P Imports
+from p2p.manager import P2PManager
+from p2p.event_handler import P2PEventHandler
+from p2p.parking_integration import P2PParkingBroadcaster
+from p2p.sync_manager import P2PSyncManager
+from p2p.database_extensions import patch_database_for_p2p
+import p2p_api
+import p2p_api_extensions
+import edge_api
 
 # ==================== FastAPI App ====================
 app = FastAPI(title="Central Parking Management API")
@@ -34,11 +45,34 @@ parking_state = None
 camera_registry = None
 config_manager = ConfigManager()
 
+# P2P Instances
+p2p_manager = None
+p2p_event_handler = None
+p2p_broadcaster = None
+p2p_sync_manager = None
+
 # WebSocket connections for real-time history updates
 history_websocket_clients: Set[WebSocket] = set()
 
 # WebSocket connections for real-time camera updates
 camera_websocket_clients: Set[WebSocket] = set()
+
+
+def get_local_ip() -> str:
+    """
+    Auto-detect local IP address
+    Returns: Local IP address (e.g., "192.168.1.100")
+    """
+    try:
+        # Create a socket connection to external DNS to find local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception as e:
+        print(f"⚠️  Could not auto-detect IP: {e}")
+        return "127.0.0.1"  # Fallback to localhost
 
 
 async def broadcast_history_update(event_data: dict):
@@ -382,10 +416,14 @@ async def camera_broadcast_loop():
 @app.on_event("startup")
 async def startup():
     global database, parking_state, camera_registry
+    global p2p_manager, p2p_event_handler, p2p_broadcaster, p2p_sync_manager
 
     try:
         # Initialize database
         database = CentralDatabase(db_file=config.DB_FILE)
+
+        # Patch database with P2P methods
+        patch_database_for_p2p(database)
 
         # Initialize parking state manager
         parking_state = ParkingStateManager(database)
@@ -396,21 +434,94 @@ async def startup():
             heartbeat_timeout=config.CAMERA_HEARTBEAT_TIMEOUT
         )
         camera_registry.start()
-        
+
         # Tắt broadcast loop định kỳ - chỉ broadcast khi có thay đổi từ heartbeat
         # asyncio.create_task(camera_broadcast_loop())
 
+        # ==================== Initialize P2P System ====================
+        print("🔄 Initializing P2P system...")
+
+        # Auto-detect and update Central IP if needed
+        local_ip = get_local_ip()
+        print(f"🌐 Auto-detected local IP: {local_ip}")
+
+        # Update P2P config if IP is "auto" or "127.0.0.1"
+        import os
+        p2p_config_path = os.path.join("config", "p2p_config.json")
+        if os.path.exists(p2p_config_path):
+            with open(p2p_config_path, "r", encoding="utf-8") as f:
+                p2p_config = json.load(f)
+
+            current_ip = p2p_config.get("this_central", {}).get("ip", "")
+            if current_ip in ["auto", "127.0.0.1", ""]:
+                p2p_config["this_central"]["ip"] = local_ip
+                with open(p2p_config_path, "w", encoding="utf-8") as f:
+                    json.dump(p2p_config, f, indent=2, ensure_ascii=False)
+                print(f"✅ Updated P2P config IP: {current_ip} → {local_ip}")
+
+        # Initialize P2P Manager
+        p2p_manager = P2PManager()
+
+        # Initialize P2P Event Handler
+        p2p_event_handler = P2PEventHandler(
+            database=database,
+            this_central_id=p2p_manager.config.get_this_central_id()
+        )
+
+        # Initialize P2P Broadcaster
+        p2p_broadcaster = P2PParkingBroadcaster(
+            p2p_manager=p2p_manager,
+            central_id=p2p_manager.config.get_this_central_id()
+        )
+
+        # Initialize P2P Sync Manager
+        p2p_sync_manager = P2PSyncManager(
+            database=database,
+            p2p_manager=p2p_manager,
+            central_id=p2p_manager.config.get_this_central_id()
+        )
+
+        # Set P2P event callbacks
+        p2p_manager.on_vehicle_entry_pending = p2p_event_handler.handle_vehicle_entry_pending
+        p2p_manager.on_vehicle_entry_confirmed = p2p_event_handler.handle_vehicle_entry_confirmed
+        p2p_manager.on_vehicle_exit = p2p_event_handler.handle_vehicle_exit
+
+        # Set P2P sync callbacks
+        p2p_manager.on_sync_request = p2p_sync_manager.handle_sync_request
+        p2p_manager.on_sync_response = p2p_sync_manager.handle_sync_response
+
+        # Set peer connection callbacks
+        p2p_manager.on_peer_connected = p2p_sync_manager.on_peer_connected
+        p2p_manager.on_peer_disconnected = p2p_sync_manager.on_peer_disconnected
+
+        # Start P2P Manager
+        await p2p_manager.start()
+
+        # Inject dependencies into API modules
+        p2p_api.set_p2p_manager(p2p_manager)
+        edge_api.set_dependencies(database, parking_state, p2p_broadcaster)
+        p2p_api_extensions.set_database(database)
+
+        print("✅ P2P system initialized successfully")
+
     except Exception as e:
         import traceback
+        print("❌ Error during startup:")
         traceback.print_exc()
 
 
 @app.on_event("shutdown")
 async def shutdown():
-    global camera_registry
+    global camera_registry, p2p_manager
 
     if camera_registry:
         camera_registry.stop()
+
+    # Stop P2P Manager
+    if p2p_manager:
+        print("🔄 Stopping P2P system...")
+        await p2p_manager.stop()
+        print("✅ P2P system stopped")
 
 
 
@@ -912,6 +1023,114 @@ async def update_subscriptions(request: Request):
         }, status_code=500)
 
 
+@app.get("/api/parking/fees")
+async def get_parking_fees():
+    """Get cấu hình phí gửi xe từ file JSON hoặc API"""
+    import config as config_module
+    import os
+    
+    try:
+        # Nếu có PARKING_API_URL thì gọi API, nếu không thì đọc từ file JSON
+        parking_api_url = config_module.PARKING_API_URL
+        parking_json_file = config_module.PARKING_JSON_FILE
+        
+        if parking_api_url and parking_api_url.strip():
+            # Gọi API external
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(parking_api_url)
+                if response.status_code == 200:
+                    fees_data = response.json()
+                    fees_dict = fees_data if isinstance(fees_data, dict) else fees_data.get("fees", {})
+                    
+                    # Lưu vào file JSON để dùng làm cache/fallback
+                    json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
+                    os.makedirs(os.path.dirname(json_path), exist_ok=True)
+                    with open(json_path, 'w', encoding='utf-8') as f:
+                        json.dump(fees_dict, f, ensure_ascii=False, indent=2)
+                    
+                    return JSONResponse({
+                        "success": True,
+                        "fees": fees_dict,
+                        "source": "api"
+                    })
+                else:
+                    # Nếu API lỗi, fallback về file JSON
+                    raise Exception(f"API returned status {response.status_code}")
+        else:
+            # Đọc từ file JSON (fake data)
+            json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
+            if os.path.exists(json_path):
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    fees_data = json.load(f)
+                return JSONResponse({
+                    "success": True,
+                    "fees": fees_data,
+                    "source": "file"
+                })
+            else:
+                # Trả về giá trị mặc định từ config
+                return JSONResponse({
+                    "success": True,
+                    "fees": {
+                        "fee_base": getattr(config_module, "FEE_BASE", 0.5),
+                        "fee_per_hour": getattr(config_module, "FEE_PER_HOUR", 25000),
+                        "fee_overnight": getattr(config_module, "FEE_OVERNIGHT", 0),
+                        "fee_daily_max": getattr(config_module, "FEE_DAILY_MAX", 0)
+                    },
+                    "source": "default"
+                })
+                
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.put("/api/parking/fees")
+async def update_parking_fees(request: Request):
+    """Update cấu hình phí gửi xe trong file JSON"""
+    import config as config_module
+    import os
+    
+    try:
+        data = await request.json()
+        fees_dict = data.get("fees", {})
+        
+        # Validate fees dict
+        if not isinstance(fees_dict, dict):
+            return JSONResponse({
+                "success": False,
+                "error": "Fees must be a dict"
+            }, status_code=400)
+        
+        # Lấy đường dẫn file JSON
+        parking_json_file = config_module.PARKING_JSON_FILE
+        json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
+        
+        # Tạo thư mục nếu chưa có
+        os.makedirs(os.path.dirname(json_path), exist_ok=True)
+        
+        # Ghi vào file JSON
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(fees_dict, f, ensure_ascii=False, indent=2)
+        
+        return JSONResponse({
+            "success": True,
+            "message": "Đã cập nhật cấu hình phí gửi xe"
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
 @app.get("/api/config")
 async def get_config():
     """Get current configuration"""
@@ -957,33 +1176,61 @@ async def update_config(request: Request):
         # Debug: Kiểm tra số lượng cameras sau khi reload
         print(f"[Config Update] Cameras sau khi reload: {list(config.EDGE_CAMERAS.keys())}")
         
-        # Sync camera_type to edge backends via /api/config
+        # Sync config to edge backends via /api/config
         sync_results = []
         if "edge_cameras" in new_config:
             import httpx
+            # Lấy IP của Central server
+            central_ip = get_local_ip()
+            central_url = f"http://{central_ip}:{config.SERVER_PORT}"
+
             for cam_id, cam_config in new_config["edge_cameras"].items():
                 ip = cam_config.get("ip")
                 camera_type = cam_config.get("camera_type", "ENTRY")
+                camera_name = cam_config.get("name", "")
 
                 if ip:
                     try:
-                        url = f"http://{ip}:5000/api/config"
+                        # 1. Sync camera config (type, name)
+                        config_url = f"http://{ip}:5000/api/config"
+                        sync_payload = {
+                            "camera": {
+                                "type": camera_type
+                            }
+                        }
+                        if camera_name:
+                            sync_payload["camera"]["name"] = camera_name
+
                         async with httpx.AsyncClient(timeout=5.0) as client:
-                            response = await client.post(url, json={
-                                "camera": {
-                                    "type": camera_type
-                                }
-                            })
+                            response = await client.post(config_url, json=sync_payload)
+
                             if response.status_code == 200:
-                                sync_results.append({
-                                    "camera_id": cam_id,
-                                    "success": True
-                                })
+                                # 2. Khởi tạo sync với Central (bật heartbeat)
+                                init_url = f"http://{ip}:5000/api/edge/init-sync"
+                                init_payload = {
+                                    "central_url": central_url,
+                                    "camera_id": int(cam_id) if isinstance(cam_id, str) else cam_id
+                                }
+
+                                init_response = await client.post(init_url, json=init_payload)
+
+                                if init_response.status_code == 200:
+                                    sync_results.append({
+                                        "camera_id": cam_id,
+                                        "success": True,
+                                        "message": "Camera synced and heartbeat enabled"
+                                    })
+                                else:
+                                    sync_results.append({
+                                        "camera_id": cam_id,
+                                        "success": False,
+                                        "error": f"Init sync failed: HTTP {init_response.status_code}"
+                                    })
                             else:
                                 sync_results.append({
                                     "camera_id": cam_id,
                                     "success": False,
-                                    "error": f"HTTP {response.status_code}"
+                                    "error": f"Config sync failed: HTTP {response.status_code}"
                                 })
                     except Exception as e:
                         sync_results.append({
@@ -1010,39 +1257,123 @@ async def update_config(request: Request):
         }, status_code=500)
 
 
-@app.get("/api/plate-image/{vehicle_id}")
-async def get_plate_image(vehicle_id: int):
-    """
-    Serve plate image từ database
-    Frontend có thể access: http://central-ip:8000/api/plate-image/123
-    """
-    global database
+# ==================== Edge Config Sync ====================
 
+@app.post("/api/edge/sync-config")
+async def sync_edge_config(request: Request):
+    """
+    Nhận config từ edge backend và tự động thêm/cập nhật camera edge vào central
+    Được gọi khi edge update config (tên camera, camera_type, hoặc thêm central server IP)
+    """
+    global config_manager
+    
     try:
-        # Query vehicle record
-        import sqlite3
-        conn = sqlite3.connect(database.db_file)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-
-        cursor.execute("SELECT plate_image FROM vehicles WHERE id = ?", (vehicle_id,))
-        result = cursor.fetchone()
-        conn.close()
-
-        if not result or not result['plate_image']:
-            raise HTTPException(status_code=404, detail={
-                "error": "Image not found",
-                "vehicle_id": vehicle_id
+        edge_config = await request.json()
+        
+        # Lấy thông tin edge_cameras từ request
+        if "edge_cameras" not in edge_config:
+            return JSONResponse({
+                "success": False,
+                "error": "Missing edge_cameras in request"
+            }, status_code=400)
+        
+        edge_cameras = edge_config["edge_cameras"]
+        
+        # Lấy config hiện tại
+        current_config = config_manager.get_config()
+        current_edge_cameras = current_config.get("edge_cameras", {})
+        
+        # Cập nhật hoặc thêm camera edge
+        updated = False
+        for cam_id, cam_config in edge_cameras.items():
+            cam_id_int = int(cam_id) if isinstance(cam_id, str) else cam_id
+            edge_ip = cam_config.get("ip")
+            edge_name = cam_config.get("name", f"Camera {cam_id_int}")
+            edge_type = cam_config.get("camera_type", "ENTRY")
+            
+            if not edge_ip:
+                continue
+            
+            # Kiểm tra xem camera đã tồn tại chưa
+            camera_exists = cam_id_int in current_edge_cameras or str(cam_id_int) in current_edge_cameras
+            
+            if not camera_exists:
+                # Thêm camera mới vào config
+                print(f"✅ [Edge Sync] Thêm camera edge mới: {cam_id_int} ({edge_name}) từ {edge_ip}")
+            else:
+                # Cập nhật camera hiện có
+                current_cam = current_edge_cameras.get(cam_id_int) or current_edge_cameras.get(str(cam_id_int))
+                if current_cam:
+                    if current_cam.get("name") != edge_name or current_cam.get("camera_type") != edge_type:
+                        print(f"🔄 [Edge Sync] Cập nhật camera edge: {cam_id_int} ({edge_name})")
+            
+            # Cập nhật config
+            current_edge_cameras[cam_id_int] = {
+                "name": edge_name,
+                "ip": edge_ip,
+                "camera_type": edge_type
+            }
+            updated = True
+        
+        if updated:
+            # Lưu config mới
+            update_config_data = {
+                "edge_cameras": current_edge_cameras
+            }
+            success = config_manager.update_config(update_config_data)
+            
+            if success:
+                # Reload config
+                import importlib
+                import sys
+                if 'config' in sys.modules:
+                    del sys.modules['config']
+                import config
+                importlib.reload(config)
+                
+                # Broadcast camera update
+                await broadcast_camera_update()
+                
+                return JSONResponse({
+                    "success": True,
+                    "message": "Edge camera config synced successfully"
+                })
+            else:
+                return JSONResponse({
+                    "success": False,
+                    "error": "Failed to update config"
+                }, status_code=500)
+        else:
+            return JSONResponse({
+                "success": True,
+                "message": "No changes needed"
             })
-
-        # Return image as JPEG
-        return Response(content=result['plate_image'], media_type="image/jpeg")
-
-    except HTTPException:
-        raise
+            
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
 
+
+# ==================== P2P API Routes ====================
+
+# Include P2P API router
+app.include_router(p2p_api.router)
+
+# Include Edge API router
+app.include_router(edge_api.router)
+
+
+@app.get("/api/p2p/sync-state")
+async def get_p2p_sync_state():
+    """Get P2P sync state"""
+    return p2p_api_extensions.get_sync_state_endpoint()
+
+
+# ==================== WebRTC Proxy ====================
 
 @app.post("/api/cameras/{camera_id}/offer")
 async def proxy_camera_offer(camera_id: int, request: Request, annotated: bool = False):

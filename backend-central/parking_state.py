@@ -3,6 +3,52 @@ Parking State Manager - Xử lý events từ Edge và cập nhật state
 """
 from datetime import datetime
 import re
+import json
+import os
+import requests
+
+
+def _load_parking_fees():
+    """
+    Helper function để load parking fees từ API hoặc file JSON
+    Returns: dict với keys: fee_base, fee_per_hour, fee_overnight, fee_daily_max
+    """
+    import config
+    
+    parking_api_url = getattr(config, "PARKING_API_URL", "")
+    parking_json_file = getattr(config, "PARKING_JSON_FILE", "data/parking_fees.json")
+    
+    try:
+        if parking_api_url and parking_api_url.strip():
+            # Gọi API external
+            response = requests.get(parking_api_url, timeout=5)
+            if response.status_code == 200:
+                fees_data = response.json()
+                fees_dict = fees_data if isinstance(fees_data, dict) else fees_data.get("fees", {})
+                
+                # Lưu vào file JSON để dùng làm cache/fallback
+                json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
+                os.makedirs(os.path.dirname(json_path), exist_ok=True)
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(fees_dict, f, ensure_ascii=False, indent=2)
+                
+                return fees_dict
+        else:
+            # Đọc từ file JSON
+            json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
+            if os.path.exists(json_path):
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+    except Exception as e:
+        print(f"⚠️ Failed to load parking fees: {e}")
+    
+    # Fallback về giá trị mặc định từ config
+    return {
+        "fee_base": getattr(config, "FEE_BASE", 0.5),
+        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000),
+        "fee_overnight": getattr(config, "FEE_OVERNIGHT", 0),
+        "fee_daily_max": getattr(config, "FEE_DAILY_MAX", 0)
+    }
 
 
 class ParkingStateManager:
@@ -10,6 +56,8 @@ class ParkingStateManager:
 
     def __init__(self, database):
         self.db = database
+        self._fees_cache = None
+        self._fees_cache_time = None
 
     def process_edge_event(self, event_type, camera_id, camera_name, camera_type, data):
         """
@@ -55,19 +103,10 @@ class ParkingStateManager:
 
     def _process_entry(self, plate_id, plate_view, camera_id, camera_name, confidence, source):
         """Process vehicle entry"""
-        # Check if vehicle already IN
-        existing = self.db.find_vehicle_in_parking(plate_id)
-        if existing:
-            # Xe đang trong bãi - không cho vào lại
-            return {
-                "success": False,
-                "error": f"Xe {plate_view} đã VÀO lúc {existing['entry_time']} ({existing['entry_camera_name']})"
-            }
-
         # Add entry
         entry_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:
-            vehicle_id = self.db.add_vehicle_entry(
+            history_id = self.db.add_vehicle_entry(
                 plate_id=plate_id,
                 plate_view=plate_view,
                 entry_time=entry_time,
@@ -77,14 +116,14 @@ class ParkingStateManager:
                 source=source
             )
 
-            if vehicle_id:
+            if history_id:
                 return {
                     "success": True,
                     "action": "ENTRY",
                     "message": f"Xe {plate_view} VÀO bãi",
                     "plate_id": plate_id,
                     "plate_view": plate_view,
-                    "vehicle_id": vehicle_id,
+                    "history_id": history_id,
                     "entry_time": entry_time
                 }
             else:
@@ -161,7 +200,7 @@ class ParkingStateManager:
     def _calculate_fee(self, entry_time_str, exit_time_str):
         """Calculate parking fee"""
         from datetime import datetime
-        import config
+        import math
 
         entry_time = datetime.strptime(entry_time_str, '%Y-%m-%d %H:%M:%S')
         exit_time = datetime.strptime(exit_time_str, '%Y-%m-%d %H:%M:%S')
@@ -174,19 +213,28 @@ class ParkingStateManager:
         minutes = int((duration_hours - hours) * 60)
         duration_str = f"{hours} giờ {minutes} phút"
 
-        # Calculate fee
-        if duration_hours <= 2:
-            fee = config.FEE_BASE
+        # Load parking fees từ API/file JSON (cache 60 giây)
+        now = datetime.now()
+        if self._fees_cache is None or \
+           (self._fees_cache_time and (now - self._fees_cache_time).total_seconds() > 60):
+            self._fees_cache = _load_parking_fees()
+            self._fees_cache_time = now
+        
+        fees = self._fees_cache
+        free_hours = fees.get("fee_base", 0.5) or 0
+        hourly_fee = fees.get("fee_per_hour", 25000) or 0
+        fee_daily_max = fees.get("fee_daily_max", 0) or 0
+
+        if duration_hours <= free_hours:
+            fee = 0
         else:
-            fee = config.FEE_BASE + int((duration_hours - 2) * config.FEE_PER_HOUR)
-
-        # Overnight charge
-        if entry_time.hour >= 22 or exit_time.hour <= 6:
-            fee += config.FEE_OVERNIGHT
-
-        # Daily max
-        if fee > config.FEE_DAILY_MAX:
-            fee = config.FEE_DAILY_MAX
+            billable_hours = duration_hours - free_hours
+            # Làm tròn lên để tính theo từng giờ
+            fee = math.ceil(billable_hours) * hourly_fee
+            
+            # Áp dụng giới hạn phí tối đa 1 ngày nếu có
+            if fee_daily_max > 0:
+                fee = min(fee, fee_daily_max)
 
         return duration_str, fee
 

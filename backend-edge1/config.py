@@ -1,3 +1,8 @@
+"""
+Edge Backend Configuration
+"""
+import os
+
 # ==================== CONFIG - OPTIMAL FOR SMOOTH VIDEO ====================
 # Plate detection model (IMX500)
 MODEL_PATH = "/home/phamt/Desktop/best_bienso_imx_model/model_out/best_bienso_rpk/network.rpk"
@@ -94,9 +99,10 @@ BARRIER_GPIO_PIN = 18  # GPIO pin điều khiển relay
 BARRIER_AUTO_CLOSE_TIME = 5.0  # Tự động đóng sau 5 giây
 
 # ==================== CENTRAL SERVER (để sync data) ====================
-CENTRAL_SERVER_URL = "http://192.168.0.144:8000"  # Server tổng
-CENTRAL_WS_URL = "ws://192.168.0.144:8000/ws/edge/edge1"  # WebSocket URL
-CENTRAL_SYNC_ENABLED = True  # Bật sync lên central server
+# Để trống nếu muốn sử dụng Edge standalone, hoặc nhập URL Central Server
+CENTRAL_SERVER_URL = ""  # Ví dụ: "http://192.168.0.144:8000" hoặc để trống cho standalone
+CENTRAL_WS_URL = ""  # WebSocket URL (tự động tạo từ CENTRAL_SERVER_URL nếu có)
+CENTRAL_SYNC_ENABLED = False  # Bật sync lên central server (tự động bật nếu có CENTRAL_SERVER_URL)
 
 # ==================== OFFLINE MODE & FALLBACK ====================
 # Offline exit strategy khi Central down + xe không có trong cache
@@ -117,5 +123,26 @@ OFFLINE_QUEUE_DB = "data/offline_queue.db"
 
 # Vehicle cache database
 VEHICLE_CACHE_DB = "data/edge_cache.db"
+
+# ==================== PARKING FEE MANAGEMENT ====================
+# Fee calculation - Nếu có PARKING_API_URL thì gọi API, nếu không thì dùng file JSON
+PARKING_API_URL = os.getenv("PARKING_API_URL", "")  # Ví dụ: "https://api.example.com/parking/fees"
+PARKING_JSON_FILE = "data/parking_fees.json"  # File JSON local mặc định
+
+# Giá trị mặc định (fallback nếu không có API/file)
+FEE_BASE = 0.5  # 0.5 giờ = 30 phút miễn phí
+FEE_PER_HOUR = 25000  # 25k / giờ sau thời gian miễn phí
+FEE_OVERNIGHT = 0  # Không dùng nữa (giữ để tương thích config_manager)
+FEE_DAILY_MAX = 0  # Không giới hạn theo ngày
+
+# ==================== STAFF MANAGEMENT ====================
+# API endpoint để lấy danh sách người trực (để trống sẽ dùng file JSON local)
+STAFF_API_URL = os.getenv("STAFF_API_URL", "")  # Ví dụ: "https://api.example.com/staff"
+STAFF_JSON_FILE = "data/staff.json"  # File JSON local mặc định
+
+# ==================== SUBSCRIPTION MANAGEMENT ====================
+# API endpoint để lấy danh sách thuê bao (để trống sẽ dùng file JSON local)
+SUBSCRIPTION_API_URL = os.getenv("SUBSCRIPTION_API_URL", "")  # Ví dụ: "https://api.example.com/subscriptions"
+SUBSCRIPTION_JSON_FILE = "data/subscriptions.json"  # File JSON local mặc định
 
 # ===========================================================================

@@ -1,9 +1,15 @@
-import CameraView from "../camera/CameraView";
+import CameraView from "@/components/camera/CameraView";
+import useBackendType from "@/hooks/useBackendType";
 
 /**
- * AppBody - Component body hiển thị cameras grid
+ * Body - Component body hiển thị cameras grid
  */
 const Body = ({ cameras, onHistoryUpdate }) => {
+  const { isEdge } = useBackendType();
+
+  // Nếu là edge và chỉ có 1 camera, hiển thị full màn hình
+  const isSingleCameraEdge = isEdge && cameras.length === 1;
+
   return (
     <div className="flex-grow-1 p-2 overflow-hidden">
       <div className="row g-2 h-100">
@@ -14,7 +20,14 @@ const Body = ({ cameras, onHistoryUpdate }) => {
           </div>
         ) : (
           cameras.map((camera) => (
-            <div key={camera.id} className="col-12 col-md-6 col-lg-3 h-100">
+            <div
+              key={camera.id}
+              className={
+                isSingleCameraEdge
+                  ? "col-12 h-100"
+                  : "col-12 col-md-6 col-lg-3 h-100"
+              }
+            >
               <CameraView camera={camera} onHistoryUpdate={onHistoryUpdate} />
             </div>
           ))

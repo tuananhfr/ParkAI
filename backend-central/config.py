@@ -16,11 +16,15 @@ DB_FILE = "data/central.db"
 CAMERA_HEARTBEAT_TIMEOUT = 60  # 60s không nhận heartbeat → offline
 
 # ==================== PARKING ====================
-# Fee calculation (giống Edge)
-FEE_BASE = 10000  # 10k cho 2 giờ đầu
-FEE_PER_HOUR = 5000  # 5k/giờ sau 2 giờ
-FEE_OVERNIGHT = 50000  # 50k qua đêm (22h-6h)
-FEE_DAILY_MAX = 100000  # 100k tối đa 1 ngày
+# Fee calculation - Nếu có PARKING_API_URL thì gọi API, nếu không thì dùng file JSON
+PARKING_API_URL = os.getenv("PARKING_API_URL", "")  # Ví dụ: "https://api.example.com/parking/fees"
+PARKING_JSON_FILE = "data/parking_fees.json"  # File JSON local mặc định
+
+# Giá trị mặc định (fallback nếu không có API/file)
+FEE_BASE = 0.5  # 0.5 giờ = 30 phút miễn phí
+FEE_PER_HOUR = 25000  # 25k / giờ sau thời gian miễn phí
+FEE_OVERNIGHT = 0  # Không dùng nữa (giữ để tương thích config_manager)
+FEE_DAILY_MAX = 0  # Không giới hạn theo ngày
 
 # ==================== STAFF MANAGEMENT ====================
 # API endpoint để lấy danh sách người trực (để trống sẽ dùng file JSON local)

@@ -1,60 +1,81 @@
 import { useState, useEffect } from "react";
 import { CENTRAL_URL } from "../config";
+import useConnectionStatus from "./useConnectionStatus";
 
 /**
  * Custom hook để quản lý cameras (progressive loading + WebSocket)
+ * - Auto-reconnect khi backend down → up
  */
 const useCameras = () => {
   const [cameras, setCameras] = useState([]);
+  const { isConnected } = useConnectionStatus();
+  const [previousConnection, setPreviousConnection] = useState(null);
+
+  // Auto-refetch cameras khi backend reconnect (CHỈ khi false → true, KHÔNG phải null → true)
+  useEffect(() => {
+    if (
+      isConnected === true &&
+      previousConnection === false &&
+      previousConnection !== null
+    ) {
+      console.log("[Cameras] Backend reconnected, reloading cameras...");
+      loadCamerasProgressively();
+    }
+    if (isConnected !== null) {
+      setPreviousConnection(isConnected);
+    }
+  }, [isConnected, previousConnection]);
+
+  const loadCamerasProgressively = async () => {
+    try {
+      const response = await fetch(`${CENTRAL_URL}/api/cameras`);
+      const data = await response.json();
+
+      if (data.success && data.cameras) {
+        // Sort cameras by ID để load theo thứ tự
+        const sortedCameras = data.cameras.sort((a, b) => a.id - b.id);
+
+        // Load từng camera với delay 300ms để tránh overload
+        for (let i = 0; i < sortedCameras.length; i++) {
+          // Delay 300ms giữa mỗi camera (ngoại trừ camera đầu tiên)
+          if (i > 0) {
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+
+          // Add camera vào state
+          setCameras((prev) => {
+            const exists = prev.find((c) => c.id === sortedCameras[i].id);
+            if (exists) {
+              // Update existing camera
+              return prev.map((c) =>
+                c.id === sortedCameras[i].id ? sortedCameras[i] : c
+              );
+            } else {
+              // Add new camera
+              return [...prev, sortedCameras[i]];
+            }
+          });
+        }
+
+        console.log(
+          `[Cameras] Loaded ${sortedCameras.length} cameras progressively`
+        );
+      }
+    } catch (err) {
+      console.error("[Cameras] Failed to load cameras:", err);
+    }
+  };
 
   useEffect(() => {
     // ===== PROGRESSIVE CAMERA LOADING =====
     // Load cameras tuần tự với delay 300ms/camera để tránh quá tải WebRTC
-    const loadCamerasProgressively = async () => {
-      try {
-        const response = await fetch(`${CENTRAL_URL}/api/cameras`);
-        const data = await response.json();
-
-        if (data.success && data.cameras) {
-          // Sort cameras by ID để load theo thứ tự
-          const sortedCameras = data.cameras.sort((a, b) => a.id - b.id);
-
-          // Load từng camera với delay 300ms để tránh overload
-          for (let i = 0; i < sortedCameras.length; i++) {
-            // Delay 300ms giữa mỗi camera (ngoại trừ camera đầu tiên)
-            if (i > 0) {
-              await new Promise((resolve) => setTimeout(resolve, 300));
-            }
-
-            // Add camera vào state
-            setCameras((prev) => {
-              const exists = prev.find((c) => c.id === sortedCameras[i].id);
-              if (exists) {
-                // Update existing camera
-                return prev.map((c) =>
-                  c.id === sortedCameras[i].id ? sortedCameras[i] : c
-                );
-              } else {
-                // Add new camera
-                return [...prev, sortedCameras[i]];
-              }
-            });
-          }
-
-          console.log(
-            `[Cameras] Loaded ${sortedCameras.length} cameras progressively`
-          );
-        }
-      } catch (err) {
-        console.error("[Cameras] Failed to load cameras:", err);
-      }
-    };
 
     // Start progressive loading NGAY
     loadCamerasProgressively();
 
     // WebSocket cho camera updates (CHẠY SONG SONG - real-time updates)
-    const wsUrl = CENTRAL_URL.replace("http", "ws") + "/ws/cameras";
+    // Sử dụng CENTRAL_URL để tạo WebSocket URL (cả central và edge đều có /ws/cameras)
+    const wsUrl = CENTRAL_URL.replace(/^http/, "ws") + "/ws/cameras";
     let ws = null;
     let reconnectTimer = null;
     let pingInterval = null;

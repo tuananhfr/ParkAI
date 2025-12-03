@@ -17,6 +17,7 @@ class ConfigManager:
         """Đọc config hiện tại"""
         import config
         from urllib.parse import urlparse
+        import socket
 
         # Parse edge cameras để trích xuất IP từ base_url
         edge_cameras = {}
@@ -33,7 +34,20 @@ class ConfigManager:
                 "camera_type": cam_config.get("camera_type", "ENTRY")  # ENTRY | EXIT
             }
 
+        # Auto-detect Central IP nếu không có trong config hoặc là "auto"
+        central_ip = config.CENTRAL_SERVER_IP if hasattr(config, "CENTRAL_SERVER_IP") else ""
+        if not central_ip or central_ip in ["auto", "", "127.0.0.1", "localhost"]:
+            # Auto-detect local IP
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                central_ip = s.getsockname()[0]
+                s.close()
+            except Exception:
+                central_ip = "127.0.0.1"
+
         return {
+            "backend_type": "central",
             "server": {
                 "host": config.SERVER_HOST,
                 "port": config.SERVER_PORT
@@ -48,7 +62,8 @@ class ConfigManager:
                 "fee_base": config.FEE_BASE,
                 "fee_per_hour": config.FEE_PER_HOUR,
                 "fee_overnight": config.FEE_OVERNIGHT,
-                "fee_daily_max": config.FEE_DAILY_MAX
+                "fee_daily_max": config.FEE_DAILY_MAX,
+                "api_url": config.PARKING_API_URL if hasattr(config, "PARKING_API_URL") else ""
             },
             "staff": {
                 "api_url": config.STAFF_API_URL if hasattr(config, "STAFF_API_URL") else ""
@@ -60,7 +75,7 @@ class ConfigManager:
                 "api_url": config.REPORT_API_URL if hasattr(config, "REPORT_API_URL") else ""
             },
             "central_server": {
-                "ip": config.CENTRAL_SERVER_IP if hasattr(config, "CENTRAL_SERVER_IP") else ""
+                "ip": central_ip  # Auto-detected IP
             },
             "central_sync": {
                 "servers": self._parse_sync_servers(config.CENTRAL_SYNC_SERVERS if hasattr(config, "CENTRAL_SYNC_SERVERS") else "[]")
@@ -84,10 +99,17 @@ class ConfigManager:
                 content = self._update_value(content, "CAMERA_HEARTBEAT_TIMEOUT", new_config["camera"]["heartbeat_timeout"])
 
             if "parking" in new_config:
-                content = self._update_value(content, "FEE_BASE", new_config["parking"]["fee_base"])
-                content = self._update_value(content, "FEE_PER_HOUR", new_config["parking"]["fee_per_hour"])
-                content = self._update_value(content, "FEE_OVERNIGHT", new_config["parking"]["fee_overnight"])
-                content = self._update_value(content, "FEE_DAILY_MAX", new_config["parking"]["fee_daily_max"])
+                parking_config = new_config["parking"]
+                if "fee_base" in parking_config:
+                    content = self._update_value(content, "FEE_BASE", parking_config["fee_base"])
+                if "fee_per_hour" in parking_config:
+                    content = self._update_value(content, "FEE_PER_HOUR", parking_config["fee_per_hour"])
+                if "fee_overnight" in parking_config:
+                    content = self._update_value(content, "FEE_OVERNIGHT", parking_config["fee_overnight"])
+                if "fee_daily_max" in parking_config:
+                    content = self._update_value(content, "FEE_DAILY_MAX", parking_config["fee_daily_max"])
+                if "api_url" in parking_config:
+                    content = self._update_value(content, "PARKING_API_URL", parking_config["api_url"], is_string=True)
 
             if "staff" in new_config:
                 staff_api_url = new_config["staff"].get("api_url", "")
@@ -138,7 +160,8 @@ class ConfigManager:
             pattern = rf'^{key}\s*=\s*"[^"]*"'
             replacement = f'{key} = "{value}"'
         else:
-            pattern = rf'^{key}\s*=\s*\d+'
+            # Hỗ trợ cả số nguyên lẫn số thực (vd: 0.5)
+            pattern = rf'^{key}\s*=\s*[-+]?\d*\.?\d+'
             replacement = f'{key} = {value}'
 
         content = re.sub(pattern, replacement, content, flags=re.MULTILINE)

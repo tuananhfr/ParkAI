@@ -5,8 +5,52 @@ import re
 import json
 import os
 import httpx
+import requests
 from datetime import datetime
 from database import Database
+
+def _load_parking_fees():
+    """
+    Helper function để load parking fees từ API hoặc file JSON
+    Returns: dict với keys: fee_base, fee_per_hour, fee_overnight, fee_daily_max
+    """
+    import config
+    
+    parking_api_url = getattr(config, "PARKING_API_URL", "")
+    parking_json_file = getattr(config, "PARKING_JSON_FILE", "data/parking_fees.json")
+    
+    try:
+        if parking_api_url and parking_api_url.strip():
+            # Gọi API external
+            response = requests.get(parking_api_url, timeout=5)
+            if response.status_code == 200:
+                fees_data = response.json()
+                fees_dict = fees_data if isinstance(fees_data, dict) else fees_data.get("fees", {})
+                
+                # Lưu vào file JSON để dùng làm cache/fallback
+                json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
+                os.makedirs(os.path.dirname(json_path), exist_ok=True)
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(fees_dict, f, ensure_ascii=False, indent=2)
+                
+                return fees_dict
+        else:
+            # Đọc từ file JSON
+            json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
+            if os.path.exists(json_path):
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+    except Exception as e:
+        print(f"⚠️ Failed to load parking fees: {e}")
+    
+    # Fallback về giá trị mặc định từ config
+    return {
+        "fee_base": getattr(config, "FEE_BASE", 0.5),
+        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000),
+        "fee_overnight": getattr(config, "FEE_OVERNIGHT", 0),
+        "fee_daily_max": getattr(config, "FEE_DAILY_MAX", 0)
+    }
+
 
 class ParkingManager:
     """Quản lý parking với SQLite"""
@@ -15,6 +59,8 @@ class ParkingManager:
         self.db = Database(db_file)
         self._subscription_cache = None
         self._subscription_cache_time = None
+        self._fees_cache = None
+        self._fees_cache_time = None
 
     def check_subscription(self, plate_id):
         """
@@ -31,33 +77,58 @@ class ParkingManager:
             now = datetime.now()
             if self._subscription_cache is None or \
                (self._subscription_cache_time and (now - self._subscription_cache_time).total_seconds() > 60):
-                # Fetch subscriptions từ Central API
+                # Ưu tiên: Fetch subscriptions từ local edge API
                 import config
-                central_url = config.CENTRAL_SERVER_URL
+                subscription_api_url = getattr(config, "SUBSCRIPTION_API_URL", "")
+                subscription_json_file = getattr(config, "SUBSCRIPTION_JSON_FILE", "data/subscriptions.json")
 
                 try:
-                    # Sync call (trong context này OK vì chỉ gọi 1 lần/60s)
-                    import requests
-                    response = requests.get(f"{central_url}/api/subscriptions", timeout=2)
-
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get('success'):
-                            self._subscription_cache = data.get('subscriptions', [])
+                    if subscription_api_url and subscription_api_url.strip():
+                        # Gọi API external
+                        import requests
+                        response = requests.get(subscription_api_url, timeout=2)
+                        if response.status_code == 200:
+                            subscription_data = response.json()
+                            self._subscription_cache = (
+                                subscription_data
+                                if isinstance(subscription_data, list)
+                                else subscription_data.get("subscriptions", [])
+                            )
                             self._subscription_cache_time = now
-                except Exception as e:
-                    print(f"⚠️ Failed to fetch subscriptions from Central: {e}")
-                    # Fallback: Try local file nếu Central down
-                    try:
-                        local_file = os.path.join(os.path.dirname(__file__), "../backend-central/data/subscriptions.json")
-                        if os.path.exists(local_file):
-                            with open(local_file, 'r', encoding='utf-8') as f:
+                        else:
+                            raise Exception(f"API returned status {response.status_code}")
+                    else:
+                        # Đọc từ file JSON local
+                        json_path = os.path.join(os.path.dirname(__file__), subscription_json_file)
+                        if os.path.exists(json_path):
+                            with open(json_path, 'r', encoding='utf-8') as f:
                                 self._subscription_cache = json.load(f)
                                 self._subscription_cache_time = now
-                    except Exception as e2:
-                        print(f"⚠️ Failed to load local subscriptions: {e2}")
-                        self._subscription_cache = []
-                        self._subscription_cache_time = now
+                        else:
+                            # Fallback: Thử fetch từ Central nếu có
+                            central_url = getattr(config, "CENTRAL_SERVER_URL", "")
+                            if central_url:
+                                import requests
+                                response = requests.get(f"{central_url}/api/subscriptions", timeout=2)
+                                if response.status_code == 200:
+                                    data = response.json()
+                                    if data.get('success'):
+                                        self._subscription_cache = data.get('subscriptions', [])
+                                        self._subscription_cache_time = now
+                                    else:
+                                        self._subscription_cache = []
+                                        self._subscription_cache_time = now
+                                else:
+                                    self._subscription_cache = []
+                                    self._subscription_cache_time = now
+                            else:
+                                # Không có central_url, set cache rỗng
+                                self._subscription_cache = []
+                                self._subscription_cache_time = now
+                except Exception as e:
+                    print(f"⚠️ Failed to fetch subscriptions: {e}")
+                    self._subscription_cache = []
+                    self._subscription_cache_time = now
 
             # Search trong cache
             if not self._subscription_cache:
@@ -305,12 +376,7 @@ class ParkingManager:
     def calculate_fee(self, entry_time, exit_time):
         """
         Tính phí gửi xe
-
-        Logic:
-        - 2 giờ đầu: 10,000đ
-        - Mỗi giờ tiếp: 5,000đ
-        - Qua đêm (>12h): 50,000đ
-        - Qua ngày (>24h): 100,000đ/ngày
+        Load fees từ API/file JSON thay vì hardcode
         """
         try:
             if isinstance(entry_time, str):
@@ -319,18 +385,35 @@ class ParkingManager:
                 exit_time = datetime.strptime(exit_time, "%Y-%m-%d %H:%M:%S")
 
             delta = exit_time - entry_time
-            hours = delta.total_seconds() / 3600
+            duration_hours = delta.total_seconds() / 3600
 
-            if hours <= 2:
-                return 10000
-            elif hours <= 12:
-                return 10000 + int((hours - 2) * 5000)
-            elif hours <= 24:
-                return 50000
+            # Load parking fees từ API/file JSON (cache 60 giây)
+            now = datetime.now()
+            if self._fees_cache is None or \
+               (self._fees_cache_time and (now - self._fees_cache_time).total_seconds() > 60):
+                self._fees_cache = _load_parking_fees()
+                self._fees_cache_time = now
+            
+            fees = self._fees_cache
+            free_hours = fees.get("fee_base", 0.5) or 0
+            hourly_fee = fees.get("fee_per_hour", 25000) or 0
+            fee_daily_max = fees.get("fee_daily_max", 0) or 0
+
+            if duration_hours <= free_hours:
+                fee = 0
             else:
-                days = int(hours / 24)
-                return days * 100000
-        except:
+                billable_hours = duration_hours - free_hours
+                # Làm tròn lên để tính theo từng giờ
+                import math
+                fee = math.ceil(billable_hours) * hourly_fee
+                
+                # Áp dụng giới hạn phí tối đa 1 ngày nếu có
+                if fee_daily_max > 0:
+                    fee = min(fee, fee_daily_max)
+
+            return fee
+        except Exception as e:
+            print(f"⚠️ Error calculating fee: {e}")
             return 0
 
     def get_history(self, limit=100, today_only=False, status=None):

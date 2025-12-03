@@ -21,3 +21,15 @@ html, body {
   height: 100vh;
   overflow: hidden;
 }
+
+/* Connection Status Banner Animation */
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}

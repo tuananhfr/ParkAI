@@ -7,7 +7,6 @@ import CameraHeader from "./ui/CameraHeader";
 import VideoStream from "./video/VideoStream";
 import PlateImage from "./plate/PlateImage";
 import PlateInput from "./plate/PlateInput";
-import EditPlateModal from "./plate/EditPlateModal";
 import VehicleInfo from "./vehicle/VehicleInfo";
 import BarrierControls from "./barrier/BarrierControls";
 import Notification from "./ui/Notification";
@@ -45,9 +44,11 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
   const [plateValid, setPlateValid] = useState(true);
   const [isOpening, setIsOpening] = useState(false);
   const [cameraInfo, setCameraInfo] = useState({
+    id: camera?.id,
     name: camera?.name,
     type: camera?.type,
     location: camera?.location,
+    ip: camera?.ip || camera?.edge_ip || camera?.host,
   });
   const [userEdited, setUserEdited] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -55,7 +56,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     is_open: false,
     enabled: false,
   });
-  const [barrierOpenedPlate, setBarrierOpenedPlate] = useState(null);
+  const [, setBarrierOpenedPlate] = useState(null);
   const [notificationMessage, setNotificationMessage] = useState(null);
   const [vehicleInfo, setVehicleInfo] = useState({
     entry_time: null,
@@ -65,16 +66,25 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     customer_type: null,
     is_subscriber: false,
   });
-  const [showEditModal, setShowEditModal] = useState(false);
 
   // Update camera info when camera changes
   useEffect(() => {
     setCameraInfo({
+      id: camera?.id,
       name: camera?.name,
       type: camera?.type,
       location: camera?.location,
+      ip: camera?.ip || camera?.edge_ip || camera?.host,
     });
-  }, [camera?.name, camera?.type, camera?.location]);
+  }, [
+    camera?.id,
+    camera?.name,
+    camera?.type,
+    camera?.location,
+    camera?.ip,
+    camera?.edge_ip,
+    camera?.host,
+  ]);
 
   // Sync refs with state
   useEffect(() => {
@@ -159,10 +169,18 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
 
     const cleanupPeer = () => {
       if (peerRef.current) {
-        peerRef.current.ontrack = null;
-        peerRef.current.onconnectionstatechange = null;
-        peerRef.current.close();
-        peerRef.current = null;
+        try {
+          // Chỉ close nếu chưa closed
+          if (peerRef.current.signalingState !== "closed") {
+            peerRef.current.ontrack = null;
+            peerRef.current.onconnectionstatechange = null;
+            peerRef.current.close();
+          }
+        } catch (err) {
+          console.warn("[CameraView] Error cleaning up peer:", err);
+        } finally {
+          peerRef.current = null;
+        }
       }
     };
 
@@ -250,12 +268,37 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
         });
 
         if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(
+            errorData.error || `HTTP ${response.status}: ${response.statusText}`
+          );
         }
 
         const answer = await response.json();
-        await pc.setRemoteDescription(answer);
+
+        // Kiểm tra xem answer có đúng format không
+        if (!answer || !answer.sdp || !answer.type) {
+          throw new Error(answer?.error || "Invalid answer format from server");
+        }
+
+        // Kiểm tra signalingState trước khi setRemoteDescription
+        if (pc.signalingState === "closed") {
+          throw new Error("PeerConnection is closed");
+        }
+
+        // Kiểm tra lại một lần nữa sau khi await
+        if (cancelled || pc.signalingState === "closed") {
+          return;
+        }
+
+        await pc.setRemoteDescription(
+          new RTCSessionDescription({
+            sdp: answer.sdp,
+            type: answer.type,
+          })
+        );
       } catch (err) {
+        if (cancelled) return;
         setError(
           err?.message ||
             "Không thể kết nối WebRTC. Vui lòng kiểm tra Edge camera."
@@ -293,145 +336,174 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     wantsAnnotated,
   ]);
 
-  // WebSocket for detections and barrier status
+  // WebSocket for detections and barrier status (auto-reconnect khi backend restart)
   useEffect(() => {
+    let pingInterval = null;
+    let reconnectTimer = null;
+
     const cleanupWebSocket = () => {
       if (wsRef.current) {
-        wsRef.current.close();
+        try {
+          wsRef.current.onclose = null;
+          wsRef.current.close();
+        } catch (e) {
+          // ignore
+        }
         wsRef.current = null;
       }
     };
 
-    cleanupWebSocket();
-
-    if (!controlProxy?.ws_url) {
-      lastDetectionsRef.current = [];
-      setDetections([]);
-      return;
-    }
-
-    const ws = new WebSocket(controlProxy.ws_url);
-    wsRef.current = ws;
-
-    const pingInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send("ping");
+    const connect = () => {
+      // Nếu không có WS URL thì clear detections và không kết nối
+      if (!controlProxy?.ws_url) {
+        lastDetectionsRef.current = [];
+        setDetections([]);
+        return;
       }
-    }, 5000);
 
-    ws.onopen = () => {};
+      // Đóng kết nối cũ trước khi mở kết nối mới
+      cleanupWebSocket();
 
-    ws.onmessage = (event) => {
-      try {
-        const data = event.data;
-        if (data === "ping") {
-          ws.send("pong");
-          return;
+      const ws = new WebSocket(controlProxy.ws_url);
+      wsRef.current = ws;
+
+      // Ping để giữ kết nối sống
+      pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          try {
+            ws.send("ping");
+          } catch {
+            // ignore
+          }
         }
-        if (data === "pong") return;
+      }, 5000);
 
-        const message = JSON.parse(data);
+      ws.onopen = () => {};
 
-        // Handle barrier status updates
-        if (message.type === "barrier_status") {
-          const status = message.data || {};
-          setBarrierStatus({
-            is_open: status.is_open || false,
-            enabled: status.enabled !== undefined ? status.enabled : true,
-          });
-          return;
-        }
+      ws.onmessage = (event) => {
+        try {
+          const data = event.data;
+          if (data === "ping") {
+            ws.send("pong");
+            return;
+          }
+          if (data === "pong") return;
 
-        if (message.type === "detections") {
-          const detectionsData = message.data || [];
-          lastDetectionsRef.current = detectionsData;
-          setDetections(detectionsData);
-          setLastDetectionTime(Date.now());
+          const message = JSON.parse(data);
 
-          // Find detection with OCR processing
-          const detectionProcessing = detectionsData.find(
-            (det) => det.ocr_status === "processing" && det.plate_image
-          );
+          // Handle barrier status updates
+          if (message.type === "barrier_status") {
+            const status = message.data || {};
+            setBarrierStatus({
+              is_open: status.is_open || false,
+              enabled: status.enabled !== undefined ? status.enabled : true,
+            });
+            return;
+          }
 
-          // Find detection with finalized text
-          const detectionWithText = detectionsData.find((det) => det.text);
-          const normalizedPlate = detectionWithText?.text
-            ?.trim()
-            ?.toUpperCase();
+          if (message.type === "detections") {
+            const detectionsData = message.data || [];
+            lastDetectionsRef.current = detectionsData;
+            setDetections(detectionsData);
+            setLastDetectionTime(Date.now());
 
-          // Step 1: Show image while processing
-          if (detectionProcessing && !normalizedPlate) {
-            setPlateImage(detectionProcessing.plate_image);
-            setNotificationMessage("🔍 Đang đọc biển số...");
-            setCannotReadPlate(false);
+            // Find detection with OCR processing
+            const detectionProcessing = detectionsData.find(
+              (det) => det.ocr_status === "processing" && det.plate_image
+            );
 
-            setTimeout(() => {
+            // Find detection with finalized text
+            const detectionWithText = detectionsData.find((det) => det.text);
+            const normalizedPlate = detectionWithText?.text
+              ?.trim()
+              ?.toUpperCase();
+
+            // Step 1: Show image while processing
+            if (detectionProcessing && !normalizedPlate) {
+              setPlateImage(detectionProcessing.plate_image);
+              setNotificationMessage("🔍 Đang đọc biển số...");
+              setCannotReadPlate(false);
+
+              setTimeout(() => {
+                setNotificationMessage((prev) => {
+                  if (prev === "🔍 Đang đọc biển số...") {
+                    return null;
+                  }
+                  return prev;
+                });
+              }, 2000);
+            }
+
+            // Step 2: Process finalized text
+            if (normalizedPlate) {
+              const isValidFormat = validatePlateNumber(normalizedPlate);
+
+              if (!isValidFormat) {
+                // Invalid format - ignore silently
+                return;
+              }
+
+              // Valid format - update UI
+              setPlateValid(true);
+              if (detectionWithText?.plate_image) {
+                setPlateImage(detectionWithText.plate_image);
+              }
+
+              if (!userEditedRef.current) {
+                setPlateText(normalizedPlate);
+                setPlateSource("auto");
+                setPlateConfidence(detectionWithText?.confidence || 0);
+              }
+              setCannotReadPlate(false);
+
               setNotificationMessage((prev) => {
                 if (prev === "🔍 Đang đọc biển số...") {
                   return null;
                 }
                 return prev;
               });
-            }, 2000);
-          }
-
-          // Step 2: Process finalized text
-          if (normalizedPlate) {
-            const isValidFormat = validatePlateNumber(normalizedPlate);
-
-            if (!isValidFormat) {
-              // Invalid format - ignore silently
-              return;
-            }
-
-            // Valid format - update UI
-            setPlateValid(true);
-            if (detectionWithText?.plate_image) {
-              setPlateImage(detectionWithText.plate_image);
-            }
-
-            if (!userEditedRef.current && !showEditModal) {
-              setPlateText(normalizedPlate);
-              setPlateSource("auto");
-              setPlateConfidence(detectionWithText?.confidence || 0);
-            }
-            setCannotReadPlate(false);
-
-            setNotificationMessage((prev) => {
-              if (prev === "🔍 Đang đọc biển số...") {
-                return null;
-              }
-              return prev;
-            });
-          } else {
-            if (detectionsData.length > 0) {
-              if (!plateTextRef.current) {
-                setCannotReadPlate(true);
+            } else {
+              if (detectionsData.length > 0) {
+                if (!plateTextRef.current) {
+                  setCannotReadPlate(true);
+                }
               }
             }
           }
+        } catch (err) {
+          // Silent fail
         }
-      } catch (err) {
-        // Silent fail
-      }
+      };
+
+      ws.onerror = () => {};
+
+      ws.onclose = () => {
+        if (pingInterval) {
+          clearInterval(pingInterval);
+          pingInterval = null;
+        }
+        // Tự động reconnect sau 3 giây nếu đây vẫn là connection hiện tại
+        reconnectTimer = setTimeout(() => {
+          if (wsRef.current === ws) {
+            connect();
+          }
+        }, 3000);
+      };
     };
 
-    ws.onerror = () => {};
-
-    ws.onclose = () => {
-      clearInterval(pingInterval);
-      setTimeout(() => {
-        if (wsRef.current === ws) {
-          cleanupWebSocket();
-        }
-      }, 0);
-    };
+    // Bắt đầu kết nối
+    connect();
 
     return () => {
-      clearInterval(pingInterval);
-      ws.close();
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      if (pingInterval) {
+        clearInterval(pingInterval);
+      }
+      cleanupWebSocket();
     };
-  }, [controlProxy?.ws_url, camera?.id, showEditModal]);
+  }, [controlProxy?.ws_url, camera?.id]);
 
   // Fetch barrier status on mount
   useEffect(() => {
@@ -461,7 +533,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
   useEffect(() => {
     const shouldAutoOpen =
       !isOpening &&
-      !showEditModal &&
       plateText.trim() &&
       controlProxy?.open_barrier_url &&
       !barrierStatus.is_open &&
@@ -476,7 +547,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     }
   }, [
     isOpening,
-    showEditModal,
     plateText,
     controlProxy?.open_barrier_url,
     barrierStatus.is_open,
@@ -621,10 +691,10 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           });
 
           setNotificationMessage(
-            `🚪 Barrier đã mở! Xe ${normalizedPlate} vui lòng vào.`
+            `Barrier đã mở! Xe ${normalizedPlate} vui lòng vào.`
           );
         } else {
-          setNotificationMessage(result.message || "✅ Đã xác nhận thành công");
+          setNotificationMessage(result.message || "Đã xác nhận thành công");
         }
 
         const vehicleData = result.vehicle_info || result || {};
@@ -677,19 +747,30 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     }
   };
 
-  const handleConfirmEdit = (normalizedPlate) => {
+  const handlePlateConfirm = (normalizedPlate, message) => {
+    if (!normalizedPlate) {
+      // Validation failed, chỉ hiển thị message
+      setNotificationMessage(message);
+      setTimeout(() => {
+        setNotificationMessage(null);
+      }, 3000);
+      return;
+    }
+
+    // Validation thành công
     setPlateText(normalizedPlate);
     plateTextRef.current = normalizedPlate;
     setUserEdited(true);
     userEditedRef.current = true;
     setPlateSource("manual");
     setPlateValid(true);
-    setShowEditModal(false);
 
-    setNotificationMessage("✅ Đã cập nhật biển số!");
-    setTimeout(() => {
-      setNotificationMessage(null);
-    }, 2000);
+    if (message) {
+      setNotificationMessage(message);
+      setTimeout(() => {
+        setNotificationMessage(null);
+      }, 2000);
+    }
   };
 
   return (
@@ -727,17 +808,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
       <div
         className={`card-footer bg-light p-3 ${isFullscreen ? "d-none" : ""}`}
       >
-        <h6 className="mb-3 text-primary">
-          <i className="bi bi-info-circle-fill me-1"></i>
-          Thông tin xe
-        </h6>
-
         <PlateImage plateImage={plateImage} />
 
         <PlateInput
           plateText={plateText}
           plateSource={plateSource}
-          onEditClick={() => setShowEditModal(true)}
+          onPlateConfirm={handlePlateConfirm}
         />
 
         <VehicleInfo vehicleInfo={vehicleInfo} cameraType={cameraInfo?.type} />
@@ -769,14 +845,6 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           </small>
         </div>
       )}
-
-      <EditPlateModal
-        show={showEditModal}
-        initialPlateText={plateText}
-        onClose={() => setShowEditModal(false)}
-        onConfirm={handleConfirmEdit}
-        onNotification={setNotificationMessage}
-      />
     </div>
   );
 };

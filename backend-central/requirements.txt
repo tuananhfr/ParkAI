@@ -3,3 +3,5 @@ uvicorn==0.24.0
 httpx==0.25.2
 # Communication
 websockets==12.0
+# HTTP client for external APIs (parking fees, etc.)
+requests==2.31.0

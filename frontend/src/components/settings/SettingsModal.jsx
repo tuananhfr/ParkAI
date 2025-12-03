@@ -1,14 +1,16 @@
 import { useState, useEffect } from "react";
 import { CENTRAL_URL } from "@/config";
+import useBackendType from "@/hooks/useBackendType";
 import SubscriptionDevMode from "./subscription/SubscriptionDevMode";
 import SubscriptionList from "./subscription/SubscriptionList";
 import StaffList from "./staff/StaffList";
-import CentralSyncServersList from "./sync/CentralSyncServersList";
+import P2PSettings from "./p2p/P2PSettings";
 
 /**
  * SettingsModal - Component modal cài đặt hệ thống
  */
 const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
+  const { backendType, isEdge, isCentral } = useBackendType();
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -21,6 +23,8 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
     ip: "",
     camera_type: "ENTRY",
   });
+  const [frontendBackendHost, setFrontendBackendHost] = useState("");
+  const [frontendBackendPort, setFrontendBackendPort] = useState("");
 
   useEffect(() => {
     if (show) {
@@ -33,6 +37,18 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
         camera_type: "ENTRY",
       });
       setMessage(null);
+
+      // Parse CENTRAL_URL để fill host/port cho tab Frontend → Backend
+      try {
+        const url = new URL(CENTRAL_URL);
+        setFrontendBackendHost(url.hostname || "");
+        setFrontendBackendPort(
+          url.port || (url.protocol === "https:" ? "443" : "80")
+        );
+      } catch (e) {
+        setFrontendBackendHost("");
+        setFrontendBackendPort("");
+      }
     }
   }, [show]);
 
@@ -92,9 +108,9 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
     setConfig((prev) => ({
       ...prev,
       edge_cameras: {
-        ...prev.edge_cameras,
+        ...(prev.edge_cameras || {}),
         [camId]: {
-          ...prev.edge_cameras[camId],
+          ...(prev.edge_cameras?.[camId] || {}),
           [key]: value,
         },
       },
@@ -128,7 +144,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
     setConfig((prev) => ({
       ...prev,
       edge_cameras: {
-        ...prev.edge_cameras,
+        ...(prev.edge_cameras || {}),
         [newCameraId]: {
           name: newCamera.name.trim(),
           ip: newCamera.ip.trim(),
@@ -153,12 +169,12 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
     if (
       window.confirm(
         `Bạn có chắc muốn xóa camera ${camId}: ${
-          config.edge_cameras[camId]?.name || ""
+          config.edge_cameras?.[camId]?.name || ""
         }?`
       )
     ) {
       setConfig((prev) => {
-        const newCameras = { ...prev.edge_cameras };
+        const newCameras = { ...(prev.edge_cameras || {}) };
         delete newCameras[camId];
         return {
           ...prev,
@@ -197,7 +213,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
             ></button>
           </div>
           <div className="modal-body">
-            {loading ? (
+            {loading || !backendType ? (
               <div className="text-center py-4">
                 <div className="spinner-border text-primary"></div>
               </div>
@@ -302,15 +318,29 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                   <li className="nav-item" role="presentation">
                     <button
                       className={`nav-link ${
-                        activeTab === "central_sync" ? "active" : ""
+                        activeTab === "frontend_backend" ? "active" : ""
                       }`}
-                      onClick={() => setActiveTab("central_sync")}
+                      onClick={() => setActiveTab("frontend_backend")}
                       type="button"
                     >
-                      <i className="bi bi-arrow-repeat me-2"></i>
-                      IP máy chủ central khác
+                      <i className="bi bi-plug me-2"></i>
+                      Kết nối Frontend → Backend
                     </button>
                   </li>
+                  {backendType !== "edge" && (
+                    <li className="nav-item" role="presentation">
+                      <button
+                        className={`nav-link ${
+                          activeTab === "central_sync" ? "active" : ""
+                        }`}
+                        onClick={() => setActiveTab("central_sync")}
+                        type="button"
+                      >
+                        <i className="bi bi-arrow-repeat me-2"></i>
+                        IP máy chủ central khác
+                      </button>
+                    </li>
+                  )}
                   <li className="nav-item" role="presentation">
                     <button
                       className={`nav-link ${
@@ -332,6 +362,25 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                       <i className="bi bi-cash-coin me-2"></i>
                       Phí gửi xe
                     </h6>
+                    <div className="mb-3">
+                      <label className="form-label small">
+                        API Endpoint phí gửi xe (để trống sẽ dùng file JSON)
+                      </label>
+                      <input
+                        type="text"
+                        className="form-control form-control-sm"
+                        value={config.parking?.api_url || ""}
+                        onChange={(e) =>
+                          updateConfig("parking", "api_url", e.target.value)
+                        }
+                        placeholder="https://api.example.com/parking/fees"
+                      />
+                      <small className="text-muted">
+                        <i className="bi bi-info-circle me-1"></i>
+                        Nếu để trống, hệ thống sẽ dùng dữ liệu trong file
+                        `data/parking_fees.json`
+                      </small>
+                    </div>
                     <div className="row g-3 mb-4">
                       <div className="col-md-6">
                         <label className="form-label small">
@@ -450,14 +499,23 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                       <h6 className="border-bottom pb-2 mb-0">
                         <i className="bi bi-hdd-network me-2"></i>
                         Edge Cameras
+                        {backendType === "edge" && (
+                          <span className="badge bg-info ms-2">
+                            Single Camera Mode
+                          </span>
+                        )}
                       </h6>
-                      <button
-                        className="btn btn-sm btn-primary"
-                        onClick={() => setShowAddCameraForm(!showAddCameraForm)}
-                      >
-                        <i className="bi bi-plus-circle me-1"></i>
-                        Thêm camera
-                      </button>
+                      {backendType !== "edge" && (
+                        <button
+                          className="btn btn-sm btn-primary"
+                          onClick={() =>
+                            setShowAddCameraForm(!showAddCameraForm)
+                          }
+                        >
+                          <i className="bi bi-plus-circle me-1"></i>
+                          Thêm camera
+                        </button>
+                      )}
                     </div>
 
                     {showAddCameraForm && (
@@ -550,7 +608,17 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                       </div>
                     )}
 
-                    {Object.entries(config.edge_cameras)
+                    {backendType === "edge" && (
+                      <div className="alert alert-info mb-3">
+                        <i className="bi bi-info-circle me-2"></i>
+                        <strong>Edge Mode:</strong> Camera IP tự động điền là
+                        "localhost" và không thể thay đổi. Nếu muốn kết nối đến
+                        Central Server, vui lòng cấu hình ở tab "IP máy chủ
+                        central".
+                      </div>
+                    )}
+
+                    {Object.entries(config.edge_cameras || {})
                       .sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10))
                       .map(([camId, camConfig]) => (
                         <div key={camId} className="card mb-3">
@@ -573,13 +641,15 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                                     : "RA"}
                                 </span>
                               </h6>
-                              <button
-                                className="btn btn-sm btn-outline-danger"
-                                onClick={() => handleRemoveCamera(camId)}
-                                title="Xóa camera"
-                              >
-                                <i className="bi bi-trash"></i>
-                              </button>
+                              {backendType !== "edge" && (
+                                <button
+                                  className="btn btn-sm btn-outline-danger"
+                                  onClick={() => handleRemoveCamera(camId)}
+                                  title="Xóa camera"
+                                >
+                                  <i className="bi bi-trash"></i>
+                                </button>
+                              )}
                             </div>
                             <div className="row g-2">
                               <div className="col-md-5">
@@ -603,6 +673,11 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                               <div className="col-md-4">
                                 <label className="form-label small">
                                   IP Address
+                                  {backendType === "edge" && (
+                                    <span className="badge bg-secondary ms-2">
+                                      auto
+                                    </span>
+                                  )}
                                 </label>
                                 <input
                                   type="text"
@@ -616,6 +691,8 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                                     )
                                   }
                                   placeholder="192.168.0.144"
+                                  disabled={backendType === "edge"}
+                                  readOnly={backendType === "edge"}
                                 />
                               </div>
                               <div className="col-md-3">
@@ -791,11 +868,19 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                   <div>
                     <h6 className="border-bottom pb-2 mb-3">
                       <i className="bi bi-server me-2"></i>
-                      Cấu hình IP máy chủ central
+                      {backendType === "edge"
+                        ? "Kết nối đến Central Server"
+                        : "Cấu hình máy chủ Central hiện tại"}
                     </h6>
+
                     <div className="mb-3">
                       <label className="form-label small">
-                        IP/URL máy chủ central
+                        {backendType === "edge"
+                          ? "IP/URL Central Server (để trống nếu standalone)"
+                          : "IP máy chủ Central này"}
+                        {backendType === "central" && (
+                          <span className="badge bg-secondary ms-2">auto</span>
+                        )}
                       </label>
                       <input
                         type="text"
@@ -804,12 +889,131 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                         onChange={(e) =>
                           updateConfig("central_server", "ip", e.target.value)
                         }
-                        placeholder="http://192.168.1.100:8000"
+                        placeholder={
+                          backendType === "edge"
+                            ? "http://192.168.1.100:8000 (hoặc để trống)"
+                            : "auto hoặc 192.168.1.100"
+                        }
+                        disabled={backendType === "central"}
+                        readOnly={backendType === "central"}
                       />
                       <small className="text-muted">
                         <i className="bi bi-info-circle me-1"></i>
-                        Nhập IP/URL của máy chủ central hiện tại
+                        {backendType === "edge"
+                          ? "Nhập IP/URL của Central Server hoặc để trống để sử dụng Edge standalone"
+                          : "IP này được tự động phát hiện khi khởi động Central Server"}
                       </small>
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === "frontend_backend" && (
+                  <div>
+                    <h6 className="border-bottom pb-2 mb-3">
+                      <i className="bi bi-plug me-2"></i>
+                      Kết nối Frontend → Backend
+                    </h6>
+
+                    {(() => {
+                      try {
+                        const url = new URL(CENTRAL_URL);
+                        const host = frontendBackendHost || url.hostname || "";
+                        const port =
+                          frontendBackendPort ||
+                          url.port ||
+                          (url.protocol === "https:" ? "443" : "80");
+                        return (
+                          <div className="row g-3">
+                            <div className="col-md-6">
+                              <label className="form-label small">
+                                IP / Host
+                              </label>
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                value={host}
+                                onChange={(e) =>
+                                  setFrontendBackendHost(e.target.value)
+                                }
+                              />
+                            </div>
+                            <div className="col-md-6">
+                              <label className="form-label small">Port</label>
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                value={port}
+                                onChange={(e) =>
+                                  setFrontendBackendPort(e.target.value)
+                                }
+                              />
+                            </div>
+                          </div>
+                        );
+                      } catch (e) {
+                        return (
+                          <div className="alert alert-warning">
+                            <i className="bi bi-exclamation-triangle me-2"></i>
+                            CENTRAL_URL không phải URL hợp lệ. Giá trị hiện tại:{" "}
+                            <code>{CENTRAL_URL}</code>
+                          </div>
+                        );
+                      }
+                    })()}
+
+                    <div className="mt-3 d-flex justify-content-between align-items-center">
+                      <button
+                        type="button"
+                        className="btn btn-outline-secondary btn-sm"
+                        onClick={() => {
+                          if (
+                            window.confirm("Reset về CENTRAL_URL mặc định?")
+                          ) {
+                            window.localStorage.removeItem(
+                              "central_url_override"
+                            );
+                            window.location.reload();
+                          }
+                        }}
+                      >
+                        Reset về mặc định
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => {
+                          try {
+                            const baseUrl = new URL(CENTRAL_URL);
+                            const host = frontendBackendHost.trim();
+                            const port = frontendBackendPort.trim();
+                            if (!host) {
+                              alert("Vui lòng nhập IP/Host backend");
+                              return;
+                            }
+                            const protocol = baseUrl.protocol || "http:";
+                            const newUrl = `${protocol}//${host}${
+                              port ? `:${port}` : ""
+                            }`;
+                            window.localStorage.setItem(
+                              "central_url_override",
+                              newUrl
+                            );
+                            if (
+                              window.confirm(
+                                `Đã lưu backend: ${newUrl}. Reload trang để áp dụng ngay?`
+                              )
+                            ) {
+                              window.location.reload();
+                            }
+                          } catch (e) {
+                            alert(
+                              "CENTRAL_URL hiện tại không hợp lệ, không thể build URL mới."
+                            );
+                          }
+                        }}
+                      >
+                        Lưu IP/Port & Reload
+                      </button>
                     </div>
                   </div>
                 )}
@@ -818,22 +1022,9 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                   <div>
                     <h6 className="border-bottom pb-2 mb-3">
                       <i className="bi bi-arrow-repeat me-2"></i>
-                      Cấu hình IP máy chủ central khác (Đồng bộ dữ liệu)
+                      Cấu hình P2P Đồng bộ dữ liệu
                     </h6>
-                    <div className="mb-3">
-                      <label className="form-label small">
-                        Danh sách IP/URL máy chủ central khác
-                      </label>
-                      <CentralSyncServersList
-                        config={config}
-                        updateConfig={updateConfig}
-                      />
-                      <small className="text-muted">
-                        <i className="bi bi-info-circle me-1"></i>
-                        Nhập danh sách IP/URL các máy chủ central khác để đồng
-                        bộ dữ liệu
-                      </small>
-                    </div>
+                    <P2PSettings />
                   </div>
                 )}
 

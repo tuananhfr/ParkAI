@@ -65,6 +65,33 @@ class Database:
                 )
             """)
 
+            # Table: history_changes (lưu lịch sử thay đổi biển số) - giống central nhưng tham chiếu entries
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS history_changes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    history_id INTEGER NOT NULL,       -- id trong bảng entries
+                    change_type TEXT NOT NULL,         -- 'UPDATE' hoặc 'DELETE'
+                    old_plate_id TEXT,
+                    old_plate_view TEXT,
+                    new_plate_id TEXT,
+                    new_plate_view TEXT,
+                    old_data TEXT,                     -- JSON của toàn bộ record cũ
+                    new_data TEXT,                     -- JSON của toàn bộ record mới (nếu UPDATE)
+                    changed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    changed_by TEXT DEFAULT 'system'
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_history_changes_history_id
+                ON history_changes(history_id)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_history_changes_changed_at
+                ON history_changes(changed_at DESC)
+            """)
+
             # Index cho performance
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_plate_id
@@ -175,14 +202,16 @@ class Database:
                 return dict(row)
             return None
 
-    def get_history(self, limit=100, today_only=False, status=None):
+    def get_history(self, limit=100, offset=0, today_only=False, status=None, search=None):
         """
         Lấy lịch sử
 
         Args:
             limit: Số lượng records
+            offset: Skip N records đầu
             today_only: Chỉ lấy hôm nay
             status: Filter theo status (IN | OUT)
+            search: Search theo plate_id hoặc plate_view
 
         Return: list of dict
         """
@@ -202,8 +231,12 @@ class Database:
                 query += " AND status = ?"
                 params.append(status)
 
-            query += " ORDER BY created_at DESC LIMIT ?"
-            params.append(limit)
+            if search:
+                query += " AND (plate_id LIKE ? OR plate_view LIKE ?)"
+                params.extend([f"%{search}%", f"%{search}%"])
+
+            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
 
             cursor.execute(query, params)
             rows = cursor.fetchall()
@@ -307,3 +340,138 @@ class Database:
 
             print(f"🗑️  Deleted {deleted} old entries")
             return deleted
+
+    def update_history_entry(self, history_id, new_plate_id, new_plate_view):
+        """Update biển số trong history entry và lưu lịch sử thay đổi (giống central)"""
+        import json
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                # Lấy record cũ
+                cursor.execute("SELECT * FROM entries WHERE id = ?", (history_id,))
+                old_record = cursor.fetchone()
+                if not old_record:
+                    return False
+
+                old_data = dict(old_record)
+
+                # Update record
+                cursor.execute("""
+                    UPDATE entries
+                    SET plate_id = ?, plate_view = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (new_plate_id, new_plate_view, history_id))
+
+                # Lấy record mới
+                cursor.execute("SELECT * FROM entries WHERE id = ?", (history_id,))
+                new_record = cursor.fetchone()
+                new_data = dict(new_record)
+
+                # Lưu lịch sử thay đổi
+                cursor.execute("""
+                    INSERT INTO history_changes (
+                        history_id, change_type, old_plate_id, old_plate_view,
+                        new_plate_id, new_plate_view, old_data, new_data
+                    ) VALUES (?, 'UPDATE', ?, ?, ?, ?, ?, ?)
+                """, (
+                    history_id,
+                    old_data.get('plate_id'),
+                    old_data.get('plate_view'),
+                    new_plate_id,
+                    new_plate_view,
+                    json.dumps(old_data),
+                    json.dumps(new_data)
+                ))
+
+                conn.commit()
+                return True
+            except Exception as e:
+                conn.rollback()
+                print(f"❌ Error updating history entry (edge): {e}")
+                return False
+            finally:
+                conn.close()
+
+    def delete_history_entry(self, history_id):
+        """Delete history entry và lưu lịch sử thay đổi (giống central)"""
+        import json
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            try:
+                # Lấy record cũ
+                cursor.execute("SELECT * FROM entries WHERE id = ?", (history_id,))
+                old_record = cursor.fetchone()
+                if not old_record:
+                    return False
+
+                old_data = dict(old_record)
+
+                # Lưu lịch sử thay đổi trước khi xóa
+                cursor.execute("""
+                    INSERT INTO history_changes (
+                        history_id, change_type, old_plate_id, old_plate_view,
+                        old_data
+                    ) VALUES (?, 'DELETE', ?, ?, ?)
+                """, (
+                    history_id,
+                    old_data.get('plate_id'),
+                    old_data.get('plate_view'),
+                    json.dumps(old_data)
+                ))
+
+                # Xóa record trong entries
+                cursor.execute("DELETE FROM entries WHERE id = ?", (history_id,))
+
+                conn.commit()
+                return True
+            except Exception as e:
+                conn.rollback()
+                print(f"❌ Error deleting history entry (edge): {e}")
+                return False
+            finally:
+                conn.close()
+
+    def get_history_changes(self, limit=100, offset=0, history_id=None):
+        """Get lịch sử thay đổi (giống central)"""
+        import json
+        with self.lock:
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            query = "SELECT * FROM history_changes WHERE 1=1"
+            params = []
+
+            if history_id:
+                query += " AND history_id = ?"
+                params.append(history_id)
+
+            query += " ORDER BY changed_at DESC LIMIT ? OFFSET ?"
+            params.append(limit)
+            params.append(offset)
+
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            conn.close()
+
+            changes = []
+            for row in results:
+                change = dict(row)
+                # Parse JSON data
+                if change.get('old_data'):
+                    try:
+                        change['old_data'] = json.loads(change['old_data'])
+                    except:
+                        pass
+                if change.get('new_data'):
+                    try:
+                        change['new_data'] = json.loads(change['new_data'])
+                    except:
+                        pass
+                changes.append(change)
+
+            return changes

@@ -1,13 +1,51 @@
 import { useState, useEffect } from "react";
 import { CENTRAL_URL } from "../config";
+import useConnectionStatus from "./useConnectionStatus";
 
 /**
  * Custom hook để quản lý stats (header info)
  * - Fetch lần đầu + interval fallback
  * - Lắng nghe WebSocket /ws/history để cập nhật realtime khi có thay đổi history
+ * - Auto-reconnect khi backend down → up
  */
 const useStats = () => {
   const [stats, setStats] = useState(null);
+  const { isConnected } = useConnectionStatus();
+  const [previousConnection, setPreviousConnection] = useState(null);
+
+  // Auto-refetch stats khi backend reconnect (CHỈ khi false → true, KHÔNG phải null → true)
+  useEffect(() => {
+    if (
+      isConnected === true &&
+      previousConnection === false &&
+      previousConnection !== null
+    ) {
+      console.log("[Stats] Backend reconnected, reloading stats...");
+      fetchStats();
+    }
+    if (isConnected !== null) {
+      setPreviousConnection(isConnected);
+    }
+  }, [isConnected, previousConnection]);
+
+  const fetchStats = async () => {
+    try {
+      // Gọi API stats chuyên biệt
+      const response = await fetch(`${CENTRAL_URL}/api/stats`);
+      const data = await response.json();
+      if (data.success) {
+        // /api/stats trả trực tiếp fields stats
+        setStats({
+          entries_today: data.entries_today,
+          exits_today: data.exits_today,
+          vehicles_in_parking: data.vehicles_in_parking,
+          revenue_today: data.revenue_today,
+        });
+      }
+    } catch (err) {
+      // Silent fail
+    }
+  };
 
   useEffect(() => {
     // Fetch stats NGAY để có UI nhanh
@@ -63,27 +101,7 @@ const useStats = () => {
     };
   }, []);
 
-  const fetchStats = async () => {
-    try {
-      // Gọi API stats chuyên biệt
-      const response = await fetch(`${CENTRAL_URL}/api/stats`);
-      const data = await response.json();
-      if (data.success) {
-        // /api/stats trả trực tiếp fields stats
-        setStats({
-          entries_today: data.entries_today,
-          exits_today: data.exits_today,
-          vehicles_in_parking: data.vehicles_in_parking,
-          revenue_today: data.revenue_today,
-        });
-      }
-    } catch (err) {
-      // Silent fail
-    }
-  };
-
   return { stats };
 };
 
 export default useStats;
-

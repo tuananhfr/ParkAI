@@ -3,6 +3,7 @@ Config Manager - Đọc/ghi config từ config.py cho Edge Backend
 """
 import os
 import re
+import socket
 from typing import Dict, Any
 
 
@@ -11,18 +12,79 @@ class ConfigManager:
 
     def __init__(self, config_file="config.py"):
         self.config_file = config_file
+        self._cached_ip = None
+
+    def _get_local_ip(self) -> str:
+        """Lấy IP thực tế của máy (không phải localhost)"""
+        if self._cached_ip:
+            return self._cached_ip
+        
+        try:
+            # Kết nối đến một địa chỉ bên ngoài để biết IP của interface mạng chính
+            # Không thực sự gửi dữ liệu, chỉ để biết IP của máy
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(0)
+            try:
+                # Kết nối đến một địa chỉ không cần phải có (chỉ để lấy IP local)
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0]
+            except Exception:
+                # Fallback: lấy IP từ hostname
+                ip = socket.gethostbyname(socket.gethostname())
+            finally:
+                s.close()
+            
+            # Nếu vẫn là localhost, thử cách khác
+            if ip in ['127.0.0.1', 'localhost', '::1']:
+                # Lấy IP từ tất cả interfaces
+                hostname = socket.gethostname()
+                ip = socket.gethostbyname(hostname)
+            
+            self._cached_ip = ip
+            return ip
+        except Exception as e:
+            # Nếu không lấy được, trả về IP mặc định hoặc từ config
+            print(f"Warning: Could not detect local IP: {e}")
+            return "127.0.0.1"
 
     def get_config(self) -> Dict[str, Any]:
         """Đọc config hiện tại"""
         import config
+        from urllib.parse import urlparse
+
+        # Parse central server URL để lấy IP
+        central_ip = ""
+        if hasattr(config, "CENTRAL_SERVER_URL") and config.CENTRAL_SERVER_URL:
+            try:
+                parsed = urlparse(config.CENTRAL_SERVER_URL)
+                central_ip = parsed.netloc.split(":")[0] if parsed.netloc else ""
+            except:
+                pass
+
+        # Lấy IP thực tế của máy edge (không phải localhost)
+        edge_ip = self._get_local_ip()
+        # Nếu SERVER_HOST là một IP cụ thể (không phải 0.0.0.0), dùng nó
+        if hasattr(config, "SERVER_HOST") and config.SERVER_HOST not in ["0.0.0.0", "localhost", "127.0.0.1"]:
+            edge_ip = config.SERVER_HOST
+
+        # Edge chỉ có 1 camera với id=1, ip là IP thực tế của máy
+        edge_cameras = {
+            1: {
+                "name": config.CAMERA_NAME,
+                "ip": edge_ip,
+                "camera_type": config.CAMERA_TYPE
+            }
+        }
 
         return {
+            "backend_type": "edge",
             "camera": {
                 "id": config.CAMERA_ID,
                 "name": config.CAMERA_NAME,
                 "type": config.CAMERA_TYPE,
                 "location": config.CAMERA_LOCATION,
                 "gate": getattr(config, "GATE", 1),
+                "heartbeat_timeout": getattr(config, "CAMERA_HEARTBEAT_TIMEOUT", 30),
             },
             "server": {
                 "host": config.SERVER_HOST,
@@ -45,6 +107,27 @@ class ConfigManager:
                 "exit_strategy": getattr(config, "OFFLINE_EXIT_STRATEGY", "ALLOW_DEFAULT_FEE"),
                 "default_exit_fee": getattr(config, "DEFAULT_EXIT_FEE", 50000),
             },
+            # Thêm các section để tương thích với frontend
+            "parking": {
+                "fee_base": getattr(config, "FEE_BASE", 0.5),
+                "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000),
+                "fee_overnight": getattr(config, "FEE_OVERNIGHT", 0),
+                "fee_daily_max": getattr(config, "FEE_DAILY_MAX", 0),
+                "api_url": getattr(config, "PARKING_API_URL", ""),
+            },
+            "staff": {
+                "api_url": getattr(config, "STAFF_API_URL", ""),
+            },
+            "subscriptions": {
+                "api_url": getattr(config, "SUBSCRIPTION_API_URL", ""),
+            },
+            "report": {
+                "api_url": getattr(config, "REPORT_API_URL", ""),
+            },
+            "central_server": {
+                "ip": central_ip,
+            },
+            "edge_cameras": edge_cameras,
         }
 
     def update_config(self, new_config: Dict[str, Any]) -> bool:
@@ -53,6 +136,30 @@ class ConfigManager:
             # Đọc file hiện tại
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 content = f.read()
+
+            # Xử lý edge_cameras nếu có (từ frontend SettingsModal)
+            # Edge chỉ có 1 camera với id=1, map edge_cameras[1] về camera section
+            if "edge_cameras" in new_config:
+                edge_cameras = new_config["edge_cameras"]
+                # Edge chỉ có camera id=1
+                if "1" in edge_cameras or 1 in edge_cameras:
+                    cam_id = "1" if "1" in edge_cameras else 1
+                    cam_config = edge_cameras[cam_id]
+                    
+                    # Map edge_cameras về camera section
+                    if "camera" not in new_config:
+                        new_config["camera"] = {}
+                    
+                    # Map name từ edge_cameras
+                    if "name" in cam_config:
+                        new_config["camera"]["name"] = cam_config["name"]
+                    
+                    # Map camera_type từ edge_cameras về type
+                    if "camera_type" in cam_config:
+                        new_config["camera"]["type"] = cam_config["camera_type"]
+                    
+                    # IP không được thay đổi (edge tự động detect)
+                    # Bỏ qua ip trong edge_cameras
 
             # Update từng section
             if "camera" in new_config:
@@ -104,6 +211,52 @@ class ConfigManager:
                     content = self._update_value(content, "OFFLINE_EXIT_STRATEGY", offline_config["exit_strategy"], is_string=True)
                 if "default_exit_fee" in offline_config:
                     content = self._update_value(content, "DEFAULT_EXIT_FEE", offline_config["default_exit_fee"])
+
+            # Xử lý các section khác từ frontend
+            if "parking" in new_config:
+                parking_config = new_config["parking"]
+                if "fee_base" in parking_config:
+                    content = self._update_value(content, "FEE_BASE", parking_config["fee_base"], is_float=True)
+                if "fee_per_hour" in parking_config:
+                    content = self._update_value(content, "FEE_PER_HOUR", parking_config["fee_per_hour"])
+                if "fee_overnight" in parking_config:
+                    content = self._update_value(content, "FEE_OVERNIGHT", parking_config["fee_overnight"])
+                if "fee_daily_max" in parking_config:
+                    content = self._update_value(content, "FEE_DAILY_MAX", parking_config["fee_daily_max"])
+                if "api_url" in parking_config:
+                    content = self._update_value(content, "PARKING_API_URL", parking_config["api_url"], is_string=True)
+
+            if "staff" in new_config:
+                staff_config = new_config["staff"]
+                if "api_url" in staff_config:
+                    content = self._update_value(content, "STAFF_API_URL", staff_config["api_url"], is_string=True)
+
+            if "subscriptions" in new_config:
+                subscriptions_config = new_config["subscriptions"]
+                if "api_url" in subscriptions_config:
+                    content = self._update_value(content, "SUBSCRIPTION_API_URL", subscriptions_config["api_url"], is_string=True)
+
+            if "report" in new_config:
+                report_config = new_config["report"]
+                if "api_url" in report_config:
+                    content = self._update_value(content, "REPORT_API_URL", report_config["api_url"], is_string=True)
+
+            if "central_server" in new_config:
+                central_server_config = new_config["central_server"]
+                if "ip" in central_server_config:
+                    # Nếu có IP, cập nhật CENTRAL_SERVER_URL
+                    ip = central_server_config["ip"]
+                    if ip and ip.strip():
+                        # Tạo URL từ IP (giả sử port 8000 cho central)
+                        # Nếu IP đã có http:// thì dùng luôn, nếu không thì thêm
+                        if ip.startswith("http://") or ip.startswith("https://"):
+                            new_url = ip
+                        else:
+                            new_url = f"http://{ip}:8000"
+                        content = self._update_value(content, "CENTRAL_SERVER_URL", new_url, is_string=True)
+                    else:
+                        # Nếu IP trống, set CENTRAL_SERVER_URL về rỗng
+                        content = self._update_value(content, "CENTRAL_SERVER_URL", "", is_string=True)
 
             # Ghi lại file
             with open(self.config_file, 'w', encoding='utf-8') as f:
