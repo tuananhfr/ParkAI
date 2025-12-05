@@ -50,7 +50,7 @@ class DetectionService:
         # Plate tracker - Vote cho plate chính xác nhất
         self.plate_tracker = get_plate_tracker()
 
-        # ==================== ĐƠN GIẢN: CHỈ CAPTURE VÀ OCR ====================
+        # ĐƠN GIẢN: CHỈ CAPTURE VÀ OCR 
         # Capture ảnh tĩnh khi confidence cao, OCR trên ảnh đã capture
         self.captured_frame_full = None      # Full crop chưa preprocess (để gửi frontend)
         self.capture_timestamp = None        # Thời điểm capture
@@ -111,7 +111,7 @@ class DetectionService:
                     self.last_fps_time = current_time
 
 
-                # ==================== TRIGGER-BASED PROCESSING ====================
+                # TRIGGER-BASED PROCESSING 
                 # Chỉ capture và OCR khi confidence cao, không chạy OCR liên tục
 
                 # Check timeout/cooldown để reset state
@@ -145,7 +145,7 @@ class DetectionService:
                         'frame_id': frame_id
                     }
 
-                    # ============ CAPTURE LOGIC: Capture ảnh khi confidence CAO ============
+                    #== CAPTURE LOGIC: Capture ảnh khi confidence CAO ==
                     # Chỉ capture KHI:
                     # 1. KHÔNG đang xử lý plate khác
                     # 2. Confidence >= CAPTURE_CONFIDENCE_THRESHOLD
@@ -188,7 +188,7 @@ class DetectionService:
                                     self.is_processing = True
                                     self.ocr_attempts = 0
 
-                                    # ========== FLOW MỚI: GỬI ẢNH NGAY (chưa có text) ==========
+                                    # FLOW MỚI: GỬI ẢNH NGAY (chưa có text) 
                                     # BƯỚC 1: Encode và gửi ảnh về frontend NGAY (chưa OCR)
                                     _, buffer = cv2.imencode('.jpg', crop)
                                     crop_base64 = base64.b64encode(buffer).decode('utf-8')
@@ -211,7 +211,7 @@ class DetectionService:
                     # LUÔN ADD detection vào results
                     detection_results.append(detection_dict)
 
-                # ============ OCR ON CAPTURED FRAME (TRIGGER-BASED) ============
+                #== OCR ON CAPTURED FRAME (TRIGGER-BASED) ==
                 # Chỉ chạy OCR trên ảnh đã CAPTURE, KHÔNG chạy mỗi frame!
 
                 if (self.is_processing and
@@ -252,7 +252,7 @@ class DetectionService:
                         if text and self._is_valid_vietnamese_plate(text):
                             # OCR thành công!
 
-                            # ========== FLOW ĐƠN GIẢN: GỬI TEXT SAU KHI OCR XONG ==========
+                            # FLOW ĐƠN GIẢN: GỬI TEXT SAU KHI OCR XONG 
                             # BƯỚC 2: Gửi TEXT sau khi OCR xong (ảnh đã gửi ở BƯỚC 1)
 
                             # BƯỚC 3: CHECK BIỂN SỐ CÓ TRONG GARA CHƯA

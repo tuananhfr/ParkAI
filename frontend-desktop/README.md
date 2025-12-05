@@ -1,4 +1,4 @@
-# 🖥️ ParkAI Desktop Application
+# 🖥ParkAI Desktop Application
 
 Desktop application cho hệ thống quản lý bãi đỗ xe, xây dựng với PyQt6.
 
@@ -56,7 +56,7 @@ python main.py
 - ✅ **WebSocket Updates** - Live updates không cần polling
 - ✅ **Touchscreen Support** - Hoạt động tốt trên Pi touchscreen
 
-## 🏗️ Project Structure
+## 🏗Project Structure
 
 ```
 frontend-desktop/
@@ -82,7 +82,7 @@ frontend-desktop/
     └── helpers.py            # Helper functions
 ```
 
-## ⚙️ Configuration
+## ⚙Configuration
 
 ### Backend URL
 

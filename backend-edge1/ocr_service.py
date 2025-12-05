@@ -47,7 +47,7 @@ class OCRService:
             "error": self.error
         }
 
-    # ==================== YOLO (Ultralytics) ====================
+    # YOLO (Ultralytics) 
     def _try_init_yolo(self):
         """Khởi tạo YOLO OCR - GIỐNG CODE DEMO"""
         model_path = config.ONNX_OCR_MODEL_PATH
@@ -151,7 +151,7 @@ class OCRService:
         else:
             return "".join([c[2] for c in sorted(chars, key=lambda x: x[0])])
 
-    # ==================== ONNX Runtime ====================
+    # ONNX Runtime 
     def _try_init_onnx(self):
         """Khởi tạo ONNX OCR"""
         model_path = config.ONNX_OCR_MODEL_PATH
@@ -460,7 +460,7 @@ class OCRService:
         else:
             return "".join([c[2] for c in sorted(chars, key=lambda x: x[0])])
 
-    # ==================== Public API ====================
+    # Public API 
     def recognize(self, plate_img):
         """Đọc text từ plate image"""
         if not self.is_ready():

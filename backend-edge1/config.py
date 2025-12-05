@@ -3,7 +3,7 @@ Edge Backend Configuration
 """
 import os
 
-# ==================== CONFIG - OPTIMAL FOR SMOOTH VIDEO ====================
+# CONFIG - OPTIMAL FOR SMOOTH VIDEO 
 # Plate detection model (IMX500)
 MODEL_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/network.rpk"
 LABELS_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/labels.txt"
@@ -46,7 +46,7 @@ ENABLE_OCR = True
 OCR_CONFIDENCE_THRESHOLD = 0.25  # YOLO OCR confidence
 OCR_FRAME_SKIP = 1  # Chạy OCR mỗi frame (giảm từ 2 để có nhiều votes hơn, đọc nhanh hơn)
 
-# ==================== TRIGGER-BASED APPROACH (Production for Pi) ====================
+# TRIGGER-BASED APPROACH (Production for Pi) 
 # Capture ảnh tĩnh khi confidence cao, OCR 1-2 lần, tiết kiệm CPU
 
 # Capture settings
@@ -58,7 +58,7 @@ CAPTURE_COOLDOWN = 2.0               # Chờ 2s sau khi xử lý xong mới capt
 # Plate image settings - Gửi ảnh đã capture về frontend
 PLATE_IMAGE_MIN_CONFIDENCE = 0.55  # Gửi ảnh khi capture (thấp hơn CAPTURE_THRESHOLD 1 chút)
 
-# ==================== VOTING CONFIG - DEV MODE (200 ảnh calibration) ====================
+# VOTING CONFIG - DEV MODE (200 ảnh calibration) 
 # Real-time OCR + Voting để bù đắp confidence thấp
 
 # Quick Open: Tắt cho dev mode - confidence hiếm khi đạt 0.9
@@ -79,32 +79,32 @@ ONNX_OCR_MODEL_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/ocr.onnx"
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 5000
 
-# ==================== CAMERA IDENTIFICATION (MULTI-CAMERA SUPPORT) ====================
+# CAMERA IDENTIFICATION (MULTI-CAMERA SUPPORT) 
 CAMERA_ID = 1  # Unique ID cho mỗi camera (1, 2, 3, ...)
 CAMERA_NAME = "Cổng A"  # Tên hiển thị
 CAMERA_TYPE = "ENTRY"  # "ENTRY" (vào) | "EXIT" (ra)
 CAMERA_LOCATION = "Gate A"  # Vị trí
 GATE = 1  # Gate number (1-10)
 
-# ==================== DATABASE ====================
+# DATABASE 
 # SQLite database file (local trên mỗi camera)
 DB_FILE = "data/parking.db"
 
 # Nếu muốn mỗi camera có DB riêng (sync về server sau):
 # DB_FILE = f"data/parking_cam{CAMERA_ID}.db"
 
-# ==================== BARRIER CONTROL ====================
+# BARRIER CONTROL 
 BARRIER_ENABLED = False  # Set True nếu có barrier
 BARRIER_GPIO_PIN = 18  # GPIO pin điều khiển relay
 BARRIER_AUTO_CLOSE_TIME = 5.0  # Tự động đóng sau 5 giây
 
-# ==================== CENTRAL SERVER (để sync data) ====================
+# CENTRAL SERVER (để sync data) 
 # Để trống nếu muốn sử dụng Edge standalone, hoặc nhập URL Central Server
 CENTRAL_SERVER_URL = "http://192.168.0.144:8000"  # Ví dụ: "http://192.168.0.144:8000" hoặc để trống cho standalone
 CENTRAL_WS_URL = ""  # WebSocket URL (tự động tạo từ CENTRAL_SERVER_URL nếu có)
 CENTRAL_SYNC_ENABLED = True  # Bật sync lên central server (tự động bật nếu có CENTRAL_SERVER_URL)
 
-# ==================== OFFLINE MODE & FALLBACK ====================
+# OFFLINE MODE & FALLBACK 
 # Offline exit strategy khi Central down + xe không có trong cache
 # Choices: "ALLOW_FREE", "ALLOW_DEFAULT_FEE", "BLOCK", "QUERY_BACKUP"
 OFFLINE_EXIT_STRATEGY = "ALLOW_DEFAULT_FEE"
@@ -124,7 +124,7 @@ OFFLINE_QUEUE_DB = "data/offline_queue.db"
 # Vehicle cache database
 VEHICLE_CACHE_DB = "data/edge_cache.db"
 
-# ==================== PARKING FEE MANAGEMENT ====================
+# PARKING FEE MANAGEMENT 
 # Fee calculation - Nếu có PARKING_API_URL thì gọi API, nếu không thì dùng file JSON
 PARKING_API_URL = os.getenv("PARKING_API_URL", "")  # Ví dụ: "https://api.example.com/parking/fees"
 PARKING_JSON_FILE = "data/parking_fees.json"  # File JSON local mặc định
@@ -135,14 +135,14 @@ FEE_PER_HOUR = 25000  # 25k / giờ sau thời gian miễn phí
 FEE_OVERNIGHT = 0  # Không dùng nữa (giữ để tương thích config_manager)
 FEE_DAILY_MAX = 0  # Không giới hạn theo ngày
 
-# ==================== STAFF MANAGEMENT ====================
+# STAFF MANAGEMENT 
 # API endpoint để lấy danh sách người trực (để trống sẽ dùng file JSON local)
 STAFF_API_URL = os.getenv("STAFF_API_URL", "")  # Ví dụ: "https://api.example.com/staff"
 STAFF_JSON_FILE = "data/staff.json"  # File JSON local mặc định
 
-# ==================== SUBSCRIPTION MANAGEMENT ====================
+# SUBSCRIPTION MANAGEMENT 
 # API endpoint để lấy danh sách thuê bao (để trống sẽ dùng file JSON local)
 SUBSCRIPTION_API_URL = os.getenv("SUBSCRIPTION_API_URL", "")  # Ví dụ: "https://api.example.com/subscriptions"
 SUBSCRIPTION_JSON_FILE = "data/subscriptions.json"  # File JSON local mặc định
 
-# ===========================================================================
+#

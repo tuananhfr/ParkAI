@@ -179,7 +179,7 @@ class CameraManager:
                                 pass
 
                 finally:
-                    # CRITICAL: Release request để free memory
+                    # Release request để free memory
                     request.release()
 
             except Exception as e:

@@ -27,7 +27,7 @@ from barrier_controller import BarrierController
 from central_sync import CentralSyncService
 from config_manager import ConfigManager
 
-# ==================== FastAPI App ====================
+# FastAPI App 
 app = FastAPI(title="License Plate Detection API")
 
 app.add_middleware(
@@ -38,7 +38,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================== Global Instances ====================
+# Global Instances 
 camera_manager = None
 detection_service = None
 ocr_service = None
@@ -124,7 +124,7 @@ def _ocr_state():
         "error": getattr(ocr_service, "error", "not_initialized")
     }
 
-# ==================== WebRTC Video Track ====================
+# WebRTC Video Track 
 class CameraVideoTrack(VideoStreamTrack):
     """Video track - chỉ stream raw camera"""
     kind = "video"
@@ -146,7 +146,7 @@ class CameraVideoTrack(VideoStreamTrack):
             )
         else:
             self.frame_count += 1
-            # FIX: Convert RGB to BGR (swap Red and Blue channels)
+            # Convert RGB to BGR (swap Red and Blue channels)
             frame = frame[:, :, ::-1]
 
         new_frame = VideoFrame.from_ndarray(frame, format="rgb24")
@@ -177,7 +177,7 @@ class AnnotatedVideoTrack(VideoStreamTrack):
             )
         else:
             self.frame_count += 1
-            # FIX: Convert RGB to BGR (swap Red and Blue channels)
+            # Convert RGB to BGR (swap Red and Blue channels)
             frame = frame[:, :, ::-1]
 
         new_frame = VideoFrame.from_ndarray(frame, format="rgb24")
@@ -186,7 +186,7 @@ class AnnotatedVideoTrack(VideoStreamTrack):
 
         return new_frame
 
-# ==================== Startup & Shutdown ====================
+# Startup & Shutdown 
 @app.on_event("startup")
 async def startup():
     # Suppress STUN transaction InvalidStateError warnings
@@ -195,7 +195,7 @@ async def startup():
     global camera_manager, detection_service, ocr_service, parking_manager, barrier_controller, central_sync
     
     try:
-        # QUAN TRỌNG: Set event loop cho WebSocket manager
+        # Set event loop cho WebSocket manager
         loop = asyncio.get_running_loop()
         websocket_manager.set_event_loop(loop)
         
@@ -269,7 +269,7 @@ async def shutdown():
     pcs.clear()
     
 
-# ==================== HTTP Routes ====================
+# HTTP Routes 
 @app.get("/")
 async def index():
     return {
@@ -297,10 +297,10 @@ async def status():
     }
 
 
-# ==================== MJPEG Streaming (for PyQt6 Desktop App) ====================
+# MJPEG Streaming (for PyQt6 Desktop App) 
 
 # Cache để broadcast frames đến nhiều clients mà chỉ encode 1 lần
-# FIX: Mỗi stream có timestamp riêng để tránh collision
+# Mỗi stream có timestamp riêng để tránh collision
 _mjpeg_cache = {
     "raw": {"data": None, "timestamp": 0},
     "annotated": {"data": None, "timestamp": 0}
@@ -506,7 +506,7 @@ async def webrtc_offer_annotated(request: Request):
         await safe_close_pc(pc)
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# ==================== WebSocket Route ====================
+# WebSocket Route 
 @app.websocket("/ws/detections")
 async def websocket_detections(websocket: WebSocket):
     """WebSocket endpoint cho detections"""
@@ -536,7 +536,7 @@ async def websocket_detections(websocket: WebSocket):
         websocket_manager.disconnect(websocket)
 
 
-# ==================== Parking Management API ====================
+# Parking Management API 
 
 @app.post("/api/open-barrier")
 async def open_barrier(request: Request):
@@ -564,7 +564,7 @@ async def open_barrier(request: Request):
                 "error": "Biển số không được để trống"
             }, status_code=400)
 
-        # ========== VALIDATE BIỂN SỐ TRƯỚC KHI MỞ BARRIER ==========
+        # VALIDATE BIỂN SỐ TRƯỚC KHI MỞ BARRIER 
         # Validate format
         plate_id, display_text = parking_manager.validate_plate(plate_text)
         if not plate_id:
@@ -576,7 +576,7 @@ async def open_barrier(request: Request):
         # Check trong DB theo logic cổng VÀO/RA
         existing = parking_manager.db.find_entry_in(plate_id)
 
-        # ===== PREPARE VEHICLE INFO =====
+        # PREPARE VEHICLE INFO 
         vehicle_info = None
 
         if config.CAMERA_TYPE == "ENTRY":
@@ -594,7 +594,7 @@ async def open_barrier(request: Request):
                     "error": f"Xe {display_text} không có trong gara!"
                 }, status_code=400)
 
-            # ===== TÍNH TOÁN THÔNG TIN CHO CỔNG RA =====
+            # TÍNH TOÁN THÔNG TIN CHO CỔNG RA 
             from datetime import datetime
 
             # Check subscription
@@ -625,7 +625,7 @@ async def open_barrier(request: Request):
                 "is_subscriber": is_subscriber
             }
 
-        # ========== FLOW ĐƠN GIẢN: CHỈ MỞ BARRIER ==========
+        # FLOW ĐƠN GIẢN: CHỈ MỞ BARRIER 
         # Lưu thông tin tạm thời để lưu DB khi đóng barrier
         pending_entry = {
             "plate_text": plate_text,
@@ -858,7 +858,7 @@ async def update_config(request: Request):
         if central_sync and "camera" in new_config and "type" in new_config["camera"]:
             central_sync.camera_type = config.CAMERA_TYPE
         
-        # ===== SYNC CONFIG TO CENTRAL =====
+        # SYNC CONFIG TO CENTRAL 
         # Nếu có central server URL, gửi config đến central
         if config.CENTRAL_SERVER_URL:
             try:
@@ -1059,7 +1059,7 @@ async def get_plate_image(filename: str):
         }, status_code=404)
 
 
-# ==================== Frontend API (Compatible with Central) ====================
+# Frontend API (Compatible with Central) 
 
 @app.get("/api/parking/history")
 async def get_parking_history(
@@ -1267,7 +1267,7 @@ async def get_cameras():
         }, status_code=500)
 
 
-# ==================== WebSocket & Realtime Updates (Compatible with Central) ====================
+# WebSocket & Realtime Updates (Compatible with Central) 
 
 # Global WebSocket clients
 history_websocket_clients: Set[WebSocket] = set()
@@ -1365,7 +1365,7 @@ async def websocket_camera_updates(websocket: WebSocket):
         camera_websocket_clients.discard(websocket)
 
 
-# ==================== Staff & Subscription Management ====================
+# Staff & Subscription Management 
 
 @app.get("/api/staff")
 async def get_staff():
@@ -1683,7 +1683,7 @@ async def update_parking_fees(request: Request):
         }, status_code=500)
 
 
-# ==================== Run Server ====================
+# Run Server 
 if __name__ == '__main__':
     uvicorn.run(
         app,

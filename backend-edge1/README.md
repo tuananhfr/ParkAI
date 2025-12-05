@@ -4,12 +4,12 @@ Edge backend chạy trên Raspberry Pi 5 với IMX500 AI camera.
 
 ## Chức năng
 
-- 🎥 **Camera AI**: Detect biển số xe bằng IMX500
-- 🔍 **OCR**: Đọc text biển số (YOLO/ONNX)
-- 📹 **WebRTC**: Stream video realtime
-- 🚪 **Barrier Control**: Điều khiển cửa tự động (GPIO)
-- 🌐 **Central Sync**: Đồng bộ dữ liệu lên server trung tâm
-- 💾 **SQLite**: Lưu lịch sử local
+- **Camera AI**: Detect biển số xe bằng IMX500
+- **OCR**: Đọc text biển số (YOLO/ONNX)
+- **WebRTC**: Stream video realtime
+- **Barrier Control**: Điều khiển cửa tự động (GPIO)
+- **Central Sync**: Đồng bộ dữ liệu lên server trung tâm
+- **SQLite**: Lưu lịch sử local
 
 ## Cài đặt & Chạy
 

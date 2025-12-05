@@ -28,7 +28,7 @@ import p2p_api
 import p2p_api_extensions
 import edge_api
 
-# ==================== FastAPI App ====================
+# FastAPI App 
 app = FastAPI(title="Central Parking Management API")
 
 app.add_middleware(
@@ -39,7 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==================== Global Instances ====================
+# Global Instances 
 database = None
 parking_state = None
 camera_registry = None
@@ -370,7 +370,7 @@ async def _proxy_webrtc_offer(camera_id: int, payload: Dict[str, Any], annotated
         raise HTTPException(status_code=response.status_code, detail=data)
 
     return data
-# ==================== Startup & Shutdown ====================
+# Startup & Shutdown 
 async def camera_broadcast_loop():
     """Background task để check và broadcast camera updates khi có thay đổi"""
     last_status = None
@@ -438,7 +438,7 @@ async def startup():
         # Tắt broadcast loop định kỳ - chỉ broadcast khi có thay đổi từ heartbeat
         # asyncio.create_task(camera_broadcast_loop())
 
-        # ==================== Initialize P2P System ====================
+        # Initialize P2P System 
         print("🔄 Initializing P2P system...")
 
         # Auto-detect and update Central IP if needed
@@ -525,7 +525,7 @@ async def shutdown():
 
 
 
-# ==================== Edge API (nhận events từ Edge cameras) ====================
+# Edge API (nhận events từ Edge cameras) 
 
 @app.post("/api/edge/event")
 async def receive_edge_event(request: Request):
@@ -653,7 +653,7 @@ async def receive_heartbeat(request: Request):
         }, status_code=500)
 
 
-# ==================== Frontend API (cho Dashboard) ====================
+# Frontend API (cho Dashboard) 
 
 @app.get("/")
 async def index():
@@ -1257,7 +1257,7 @@ async def update_config(request: Request):
         }, status_code=500)
 
 
-# ==================== Edge Config Sync ====================
+# Edge Config Sync 
 
 @app.post("/api/edge/sync-config")
 async def sync_edge_config(request: Request):
@@ -1358,7 +1358,7 @@ async def sync_edge_config(request: Request):
         }, status_code=500)
 
 
-# ==================== P2P API Routes ====================
+# P2P API Routes 
 
 # Include P2P API router
 app.include_router(p2p_api.router)
@@ -1373,7 +1373,7 @@ async def get_p2p_sync_state():
     return p2p_api_extensions.get_sync_state_endpoint()
 
 
-# ==================== WebRTC Proxy ====================
+# WebRTC Proxy 
 
 @app.post("/api/cameras/{camera_id}/offer")
 async def proxy_camera_offer(camera_id: int, request: Request, annotated: bool = False):
@@ -1391,7 +1391,7 @@ async def proxy_camera_offer_annotated(camera_id: int, request: Request):
     return JSONResponse(data)
 
 
-# ==================== MJPEG Stream Proxy (for Desktop App) ====================
+# MJPEG Stream Proxy (for Desktop App) 
 
 @app.get("/api/stream/raw")
 async def proxy_mjpeg_stream_raw(camera_id: int = Query(default=1)):
@@ -1562,7 +1562,7 @@ async def websocket_camera_updates(websocket: WebSocket):
         camera_websocket_clients.discard(websocket)
 
 
-# ==================== Run Server ====================
+# Run Server 
 if __name__ == '__main__':
     uvicorn.run(
         app,

@@ -309,7 +309,7 @@ class ParkingManager:
         # Tính duration
         duration = self.calculate_duration(entry['entry_time'], datetime.now())
 
-        # ===== CHECK SUBSCRIPTION - NẾU LÀ THUÊ BAO THÌ FEE = 0 =====
+        # CHECK SUBSCRIPTION - NẾU LÀ THUÊ BAO THÌ FEE = 0 
         subscription_info = self.check_subscription(plate_id)
         is_subscriber = subscription_info.get('is_subscriber', False)
 

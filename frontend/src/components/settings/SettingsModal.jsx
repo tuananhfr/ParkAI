@@ -84,11 +84,11 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
       } else {
         setMessage({
           type: "error",
-          text: `❌ ${data.error || "Lỗi lưu cấu hình"}`,
+          text: `${data.error || "Lỗi lưu cấu hình"}`,
         });
       }
     } catch (err) {
-      setMessage({ type: "error", text: "❌ Không thể lưu cấu hình" });
+      setMessage({ type: "error", text: "Không thể lưu cấu hình" });
     } finally {
       setSaving(false);
     }

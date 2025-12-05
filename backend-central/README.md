@@ -4,7 +4,7 @@ Central server tổng hợp dữ liệu từ tất cả Edge cameras.
 
 ---
 
-## ⚡ QUICK START
+## QUICK START
 
 ```bash
 # Chạy ngay (tự động setup nếu chưa có)
@@ -93,7 +93,7 @@ sudo systemctl status parking-central
 
 ---
 
-## 🗂️ STRUCTURE
+## 🗂STRUCTURE
 
 ```
 backend-central/
@@ -166,7 +166,7 @@ watch -n 1 'curl -s http://localhost:8000/api/cameras | jq .cameras.online'
 
 ---
 
-## ✅ CHECKLIST
+## CHECKLIST
 
 - [ ] Python 3.8+ installed
 - [ ] `make setup` hoàn tất
@@ -177,4 +177,4 @@ watch -n 1 'curl -s http://localhost:8000/api/cameras | jq .cameras.online'
 
 ---
 
-**🎉 DONE! Server đang chạy tại http://localhost:8000**
+**� DONE! Server đang chạy tại http://localhost:8000**

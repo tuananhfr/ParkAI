@@ -101,19 +101,19 @@ const P2PSettings = () => {
       if (data.success) {
         setMessage({
           type: "success",
-          text: "✅ Đã lưu cấu hình P2P. Vui lòng khởi động lại server để áp dụng.",
+          text: "Đã lưu cấu hình P2P. Vui lòng khởi động lại server để áp dụng.",
         });
         await fetchP2PConfig();
       } else {
         setMessage({
           type: "error",
-          text: `❌ ${data.error || "Lỗi khi lưu cấu hình"}`,
+          text: `${data.error || "Lỗi khi lưu cấu hình"}`,
         });
       }
     } catch (err) {
       setMessage({
         type: "error",
-        text: "❌ Không thể lưu cấu hình P2P",
+        text: "Không thể lưu cấu hình P2P",
       });
     } finally {
       setSaving(false);
@@ -136,7 +136,7 @@ const P2PSettings = () => {
     if (!newPeer.id.trim() || !newPeer.ip.trim()) {
       setMessage({
         type: "error",
-        text: "❌ Vui lòng điền đầy đủ ID và IP address",
+        text: "Vui lòng điền đầy đủ ID và IP address",
       });
       return;
     }
@@ -148,7 +148,7 @@ const P2PSettings = () => {
     if (exists) {
       setMessage({
         type: "error",
-        text: `❌ Central ID "${newPeer.id.trim()}" đã tồn tại`,
+        text: `Central ID "${newPeer.id.trim()}" đã tồn tại`,
       });
       return;
     }
@@ -170,7 +170,7 @@ const P2PSettings = () => {
     setShowAddPeer(false);
     setMessage({
       type: "success",
-      text: `✅ Đã thêm peer "${newPeer.id.trim()}". Nhớ lưu cấu hình!`,
+      text: `Đã thêm peer "${newPeer.id.trim()}". Nhớ lưu cấu hình!`,
     });
   };
 
@@ -183,7 +183,7 @@ const P2PSettings = () => {
       }));
       setMessage({
         type: "success",
-        text: `✅ Đã xóa peer "${peerId}". Nhớ lưu cấu hình!`,
+        text: `Đã xóa peer "${peerId}". Nhớ lưu cấu hình!`,
       });
     }
   };
@@ -215,18 +215,18 @@ const P2PSettings = () => {
       if (data.success) {
         setMessage({
           type: "success",
-          text: `✅ Kết nối thành công đến "${peerId}"`,
+          text: `Kết nối thành công đến "${peerId}"`,
         });
       } else {
         setMessage({
           type: "error",
-          text: `❌ Không thể kết nối đến "${peerId}": ${data.error}`,
+          text: `Không thể kết nối đến "${peerId}": ${data.error}`,
         });
       }
     } catch (err) {
       setMessage({
         type: "error",
-        text: `❌ Lỗi khi kiểm tra kết nối: ${err.message}`,
+        text: `Lỗi khi kiểm tra kết nối: ${err.message}`,
       });
     }
   };
