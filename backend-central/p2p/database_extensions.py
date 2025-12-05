@@ -55,7 +55,7 @@ def add_vehicle_entry_p2p(
 
         except Exception as e:
             conn.rollback()
-            print(f"❌ Error adding P2P vehicle entry: {e}")
+            print(f"Error adding P2P vehicle entry: {e}")
             raise
         finally:
             conn.close()
@@ -134,7 +134,7 @@ def delete_entry_by_event_id(self, event_id: str) -> bool:
 
         except Exception as e:
             conn.rollback()
-            print(f"❌ Error deleting entry by event_id: {e}")
+            print(f"Error deleting entry by event_id: {e}")
             return False
 
         finally:
@@ -210,4 +210,4 @@ def patch_database_for_p2p(database_instance):
     database_instance.get_events_since = get_events_since.__get__(database_instance)
     database_instance.get_sync_state = get_sync_state.__get__(database_instance)
 
-    print("✅ Database patched with P2P methods")
+    print("Database patched with P2P methods")

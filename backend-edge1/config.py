@@ -5,8 +5,8 @@ import os
 
 # ==================== CONFIG - OPTIMAL FOR SMOOTH VIDEO ====================
 # Plate detection model (IMX500)
-MODEL_PATH = "/home/phamt/Desktop/best_bienso_imx_model/model_out/best_bienso_rpk/network.rpk"
-LABELS_PATH = "/home/phamt/Desktop/best_bienso_imx_model/model_out/best_bienso_rpk/labels.txt"
+MODEL_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/network.rpk"
+LABELS_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/labels.txt"
 
 # OCR model labels (nếu ONNX không có embedded names)
 OCR_LABELS_PATH = "/home/phamt/Desktop/parkAI/backend/models/ocr_labels.txt"  # Path to OCR labels
@@ -62,7 +62,7 @@ PLATE_IMAGE_MIN_CONFIDENCE = 0.55  # Gửi ảnh khi capture (thấp hơn CAPTUR
 # Real-time OCR + Voting để bù đắp confidence thấp
 
 # Quick Open: Tắt cho dev mode - confidence hiếm khi đạt 0.9
-QUICK_OPEN_ENABLED = False     # ❌ TẮT - model 200 ảnh hiếm khi đạt 0.9
+QUICK_OPEN_ENABLED = False     # TẮT - model 200 ảnh hiếm khi đạt 0.9
 QUICK_OPEN_CONFIDENCE = 0.90
 QUICK_OPEN_MIN_LENGTH = 8
 
@@ -70,10 +70,10 @@ QUICK_OPEN_MIN_LENGTH = 8
 PLATE_VOTE_WINDOW = 1.2       # Tăng lên 1.2s để có nhiều votes hơn (dev mode)
 PLATE_MIN_VOTES = 2           # Cần 2 votes giống nhau
 PLATE_SIMILARITY_THRESHOLD = 0.85  # 85% giống nhau mới group
-EARLY_STOP_ENABLED = True     # ✅ BẬT - Stop ngay khi đủ 2 votes
+EARLY_STOP_ENABLED = True     # BẬT - Stop ngay khi đủ 2 votes
 
 # ONNX OCR model (YOLO tự load class names)
-ONNX_OCR_MODEL_PATH = "/home/phamt/Desktop/parkAI/backend/models/ocr.onnx"
+ONNX_OCR_MODEL_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/ocr.onnx"
 
 # Server settings
 SERVER_HOST = "0.0.0.0"
@@ -100,9 +100,9 @@ BARRIER_AUTO_CLOSE_TIME = 5.0  # Tự động đóng sau 5 giây
 
 # ==================== CENTRAL SERVER (để sync data) ====================
 # Để trống nếu muốn sử dụng Edge standalone, hoặc nhập URL Central Server
-CENTRAL_SERVER_URL = ""  # Ví dụ: "http://192.168.0.144:8000" hoặc để trống cho standalone
+CENTRAL_SERVER_URL = "http://192.168.0.144:8000"  # Ví dụ: "http://192.168.0.144:8000" hoặc để trống cho standalone
 CENTRAL_WS_URL = ""  # WebSocket URL (tự động tạo từ CENTRAL_SERVER_URL nếu có)
-CENTRAL_SYNC_ENABLED = False  # Bật sync lên central server (tự động bật nếu có CENTRAL_SERVER_URL)
+CENTRAL_SYNC_ENABLED = True  # Bật sync lên central server (tự động bật nếu có CENTRAL_SERVER_URL)
 
 # ==================== OFFLINE MODE & FALLBACK ====================
 # Offline exit strategy khi Central down + xe không có trong cache

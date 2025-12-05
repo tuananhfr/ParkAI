@@ -62,7 +62,7 @@ class FallbackHandler:
             return (
                 True,
                 0,
-                "⚠️ Offline mode: Xe không có record VÀO. Cho phép RA miễn phí."
+                "Offline mode: Xe không có record VÀO. Cho phép RA miễn phí."
             )
 
         # STRATEGY 2: ALLOW_DEFAULT_FEE - Cho RA, tính phí mặc định
@@ -70,7 +70,7 @@ class FallbackHandler:
             return (
                 True,
                 self.default_fee,
-                f"⚠️ Offline mode: Tính phí mặc định {self.default_fee:,}đ"
+                f"Offline mode: Tính phí mặc định {self.default_fee:,}đ"
             )
 
         # STRATEGY 3: BLOCK - Chặn RA, yêu cầu admin
@@ -78,7 +78,7 @@ class FallbackHandler:
             return (
                 False,
                 0,
-                "❌ Offline mode: Không tìm thấy record VÀO. Vui lòng liên hệ admin."
+                "Offline mode: Không tìm thấy record VÀO. Vui lòng liên hệ admin."
             )
 
         # STRATEGY 4: QUERY_BACKUP - Query Central khác
@@ -94,14 +94,14 @@ class FallbackHandler:
                 return (
                     True,
                     fee,
-                    f"✅ Tìm thấy từ Central backup. Gate {entry_gate}, VÀO lúc {entry_time}. Phí: {fee:,}đ"
+                    f"Tìm thấy từ Central backup. Gate {entry_gate}, VÀO lúc {entry_time}. Phí: {fee:,}đ"
                 )
             else:
                 # Không tìm thấy → Fallback: Cho RA miễn phí
                 return (
                     True,
                     0,
-                    "⚠️ Không tìm thấy record từ backup. Cho phép RA miễn phí."
+                    "Không tìm thấy record từ backup. Cho phép RA miễn phí."
                 )
 
         else:
@@ -109,7 +109,7 @@ class FallbackHandler:
             return (
                 False,
                 0,
-                f"❌ Unknown strategy: {self.strategy}"
+                f"Unknown strategy: {self.strategy}"
             )
 
     def _query_backup_centrals(self, plate_id: str) -> Optional[dict]:
@@ -135,20 +135,20 @@ class FallbackHandler:
                     data = response.json()
 
                     if data.get('success') and data.get('status') == 'IN':
-                        print(f"✅ Found from backup: {url}")
+                        print(f"Found from backup: {url}")
                         return data
 
             except httpx.TimeoutException:
                 print(f"⏱️  Timeout: {url}")
                 continue
             except httpx.ConnectError:
-                print(f"❌ Connect error: {url}")
+                print(f"Connect error: {url}")
                 continue
             except Exception as e:
-                print(f"❌ Error querying {url}: {e}")
+                print(f"Error querying {url}: {e}")
                 continue
 
-        print(f"❌ Not found in any backup Central")
+        print(f"Not found in any backup Central")
         return None
 
     def get_strategy_info(self) -> dict:

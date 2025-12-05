@@ -49,7 +49,7 @@ class VehicleCache:
             CREATE INDEX IF NOT EXISTS idx_last_sync ON vehicle_cache(last_sync DESC);
         """)
         conn.commit()
-        print(f"✅ Vehicle cache DB initialized: {self.db_file}")
+        print(f"Vehicle cache DB initialized: {self.db_file}")
 
     def update_from_websocket(
         self,
@@ -152,7 +152,7 @@ class VehicleCache:
             datetime.now().isoformat()
         ))
         conn.commit()
-        print(f"✅ Local entry added: {plate_id} at Gate {gate}")
+        print(f"Local entry added: {plate_id} at Gate {gate}")
 
     def update_local_exit(
         self,
@@ -195,7 +195,7 @@ class VehicleCache:
             plate_id
         ))
         conn.commit()
-        print(f"✅ Local exit updated: {plate_id} at Gate {gate}, Fee: {fee:,}đ")
+        print(f"Local exit updated: {plate_id} at Gate {gate}, Fee: {fee:,}đ")
 
     def get_all_in_parking(self) -> List[Dict]:
         """Get all vehicles currently IN parking"""

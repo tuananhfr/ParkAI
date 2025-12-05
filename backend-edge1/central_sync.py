@@ -97,11 +97,11 @@ class CentralSyncService:
             if response.status_code == 200:
                 return True
             else:
-                print(f"❌ Central sync failed: {response.status_code} - {response.text}")
+                print(f"Central sync failed: {response.status_code} - {response.text}")
                 return False
 
         except requests.RequestException as e:
-            print(f"❌ Central sync error: {e}")
+            print(f"Central sync error: {e}")
             return False
 
     def _heartbeat_loop(self):
@@ -111,7 +111,7 @@ class CentralSyncService:
                 self._send_heartbeat()
                 time.sleep(30)
             except Exception as e:
-                print(f"❌ Heartbeat error: {e}")
+                print(f"Heartbeat error: {e}")
 
     def _send_heartbeat(self):
         """Send heartbeat to central"""
@@ -131,10 +131,10 @@ class CentralSyncService:
             )
 
             if response.status_code != 200:
-                print(f"⚠️  Heartbeat failed: {response.status_code}")
+                print(f" Heartbeat failed: {response.status_code}")
 
         except requests.RequestException as e:
-            print(f"⚠️  Heartbeat error: {e}")
+            print(f" Heartbeat error: {e}")
 
     def get_status(self):
         """Get sync status"""

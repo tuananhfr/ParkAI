@@ -25,7 +25,7 @@ class OCRService:
             return
 
         # PRIORITY 2: Raw ONNX (phức tạp hơn)
-        print("⚠️  YOLO not available, trying raw ONNX...")
+        print(" YOLO not available, trying raw ONNX...")
         self.input_shape = None
         self.input_name = None
 
@@ -71,7 +71,7 @@ class OCRService:
             self.ocr_provider = 'ultralytics'
             self._ready = True
             self.error = None
-            print(f"✅ YOLO OCR ready")
+            print(f"YOLO OCR ready")
             return True
         except ImportError:
             self.error = "Thiếu ultralytics (pip install ultralytics)"
@@ -105,7 +105,7 @@ class OCRService:
             return text
 
         except Exception as e:
-            print(f"❌ YOLO OCR error: {e}")
+            print(f"YOLO OCR error: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -182,7 +182,7 @@ class OCRService:
             self.ocr_provider = "onnxruntime"
             self._ready = True
             self.error = None
-            print(f"✅ ONNX OCR ready")
+            print(f"ONNX OCR ready")
             return True
         except Exception as exc:
             self.error = f"ONNX init lỗi: {exc}"
@@ -202,7 +202,7 @@ class OCRService:
                     class_names = [names_dict.get(i, str(i)) for i in range(max_idx + 1)]
                     return class_names
         except Exception as e:
-            print(f"⚠️  Cannot load class names from ONNX: {e}")
+            print(f" Cannot load class names from ONNX: {e}")
 
         return None
 
@@ -227,7 +227,7 @@ class OCRService:
             return None
 
         except Exception as e:
-            print(f"❌ ONNX OCR error: {e}")
+            print(f"ONNX OCR error: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -343,7 +343,7 @@ class OCRService:
             return text
 
         except Exception as e:
-            print(f"❌ Decode YOLO output error: {e}")
+            print(f"Decode YOLO output error: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -431,7 +431,7 @@ class OCRService:
             charset = self.class_names
         else:
             charset = "0123456789ABCDEFGHKLMNPSTUVXYZ"
-            print("⚠️  Using fallback charset")
+            print(" Using fallback charset")
 
         chars = []
         for box in boxes:
@@ -476,7 +476,7 @@ class OCRService:
                 return None
 
         except Exception as e:
-            print(f"❌ OCR recognize error: {e}")
+            print(f"OCR recognize error: {e}")
             import traceback
             traceback.print_exc()
             return None

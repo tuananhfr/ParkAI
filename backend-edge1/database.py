@@ -389,7 +389,7 @@ class Database:
                 return True
             except Exception as e:
                 conn.rollback()
-                print(f"❌ Error updating history entry (edge): {e}")
+                print(f"Error updating history entry (edge): {e}")
                 return False
             finally:
                 conn.close()
@@ -430,7 +430,7 @@ class Database:
                 return True
             except Exception as e:
                 conn.rollback()
-                print(f"❌ Error deleting history entry (edge): {e}")
+                print(f"Error deleting history entry (edge): {e}")
                 return False
             finally:
                 conn.close()

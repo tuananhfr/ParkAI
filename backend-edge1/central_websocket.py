@@ -33,20 +33,20 @@ class CentralWebSocketClient:
     def start(self):
         """Start WebSocket client in background thread"""
         if self.running:
-            print("⚠️  WebSocket client already running")
+            print(" WebSocket client already running")
             return
 
         self.running = True
         self.thread = threading.Thread(target=self._run_async_loop, daemon=True)
         self.thread.start()
-        print(f"✅ WebSocket client started for {self.edge_id}")
+        print(f"WebSocket client started for {self.edge_id}")
 
     def stop(self):
         """Stop WebSocket client"""
         self.running = False
         if self.thread:
             self.thread.join(timeout=2)
-        print(f"❌ WebSocket client stopped for {self.edge_id}")
+        print(f"WebSocket client stopped for {self.edge_id}")
 
     def _run_async_loop(self):
         """Run asyncio loop in thread"""
@@ -69,7 +69,7 @@ class CentralWebSocketClient:
                 ) as ws:
                     self.ws = ws
                     self.is_connected = True
-                    print(f"✅ Connected to Central WebSocket")
+                    print(f"Connected to Central WebSocket")
 
                     # Listen messages
                     async for message in ws:
@@ -81,13 +81,13 @@ class CentralWebSocketClient:
 
             except websockets.exceptions.ConnectionClosed as e:
                 self.is_connected = False
-                print(f"❌ WebSocket connection closed: {e}")
+                print(f"WebSocket connection closed: {e}")
                 print(f"⏳ Reconnecting in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
 
             except Exception as e:
                 self.is_connected = False
-                print(f"❌ WebSocket error: {e}")
+                print(f"WebSocket error: {e}")
                 print(f"⏳ Reconnecting in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
 
@@ -114,9 +114,9 @@ class CentralWebSocketClient:
                 await loop.run_in_executor(None, self.on_message_callback, data)
 
         except json.JSONDecodeError as e:
-            print(f"❌ Invalid JSON: {e}")
+            print(f"Invalid JSON: {e}")
         except Exception as e:
-            print(f"❌ Error handling message: {e}")
+            print(f"Error handling message: {e}")
 
     def get_status(self) -> dict:
         """Get WebSocket status"""

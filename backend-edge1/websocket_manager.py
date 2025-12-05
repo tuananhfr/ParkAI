@@ -89,7 +89,7 @@ class WebSocketManager:
                     self.loop
                 )
             except Exception as e:
-                print(f"❌ Error calling barrier status subscriber: {e}")
+                print(f"Error calling barrier status subscriber: {e}")
     
     def subscribe_to_barrier_status(self, callback):
         """Subscribe để nhận barrier status changes"""

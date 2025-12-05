@@ -16,7 +16,7 @@ def migrate_database_for_p2p(db_file: str = "data/central.db"):
     - sync_status: LOCAL (tạo ở central này) hoặc SYNCED (nhận từ peer)
     """
     if not os.path.exists(db_file):
-        print(f"⚠️ Database {db_file} not found, skipping migration")
+        print(f"Database {db_file} not found, skipping migration")
         return
 
     print(f"🔄 Migrating database for P2P: {db_file}")
@@ -82,11 +82,11 @@ def migrate_database_for_p2p(db_file: str = "data/central.db"):
         print("  ➕ Created table: p2p_sync_state")
 
         conn.commit()
-        print("✅ Database migration completed successfully")
+        print("Database migration completed successfully")
 
     except Exception as e:
         conn.rollback()
-        print(f"❌ Error during migration: {e}")
+        print(f"Error during migration: {e}")
         raise
 
     finally:

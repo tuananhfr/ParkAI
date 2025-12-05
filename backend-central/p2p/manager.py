@@ -36,7 +36,7 @@ class P2PManager:
     async def start(self):
         """Start P2P manager"""
         if self.running:
-            print("⚠️ P2P Manager already running")
+            print("P2P Manager already running")
             return
 
         self.running = True
@@ -55,7 +55,7 @@ class P2PManager:
         # Start heartbeat loop
         asyncio.create_task(self._heartbeat_loop())
 
-        print(f"✅ P2P Manager started (ID: {self.config.get_this_central_id()})")
+        print(f"P2P Manager started (ID: {self.config.get_this_central_id()})")
 
     async def stop(self):
         """Stop P2P manager"""
@@ -69,7 +69,7 @@ class P2PManager:
         for client in self.clients.values():
             await client.stop()
 
-        print("✅ P2P Manager stopped")
+        print("P2P Manager stopped")
 
     async def _start_server(self):
         """Start P2P server"""
@@ -138,22 +138,22 @@ class P2PManager:
                     await self.on_sync_response(message, peer_id or message.source_central)
 
             else:
-                print(f"⚠️ Unknown message type: {message.type}")
+                print(f"Unknown message type: {message.type}")
 
         except Exception as e:
-            print(f"❌ Error handling P2P message: {e}")
+            print(f"Error handling P2P message: {e}")
             import traceback
             traceback.print_exc()
 
     async def _on_peer_connected(self, peer_id: str):
         """Callback when peer connected"""
-        print(f"✅ Peer {peer_id} connected")
+        print(f"Peer {peer_id} connected")
 
         if self.on_peer_connected:
             try:
                 await self.on_peer_connected(peer_id)
             except Exception as e:
-                print(f"❌ Error in on_peer_connected callback: {e}")
+                print(f"Error in on_peer_connected callback: {e}")
 
     async def _on_peer_disconnected(self, peer_id: str):
         """Callback when peer disconnected"""
@@ -163,7 +163,7 @@ class P2PManager:
             try:
                 await self.on_peer_disconnected(peer_id)
             except Exception as e:
-                print(f"❌ Error in on_peer_disconnected callback: {e}")
+                print(f"Error in on_peer_disconnected callback: {e}")
 
     async def _heartbeat_loop(self):
         """Send heartbeat to peers every 30s"""
@@ -182,7 +182,7 @@ class P2PManager:
                 await self.broadcast(heartbeat_msg)
 
             except Exception as e:
-                print(f"❌ Error in heartbeat loop: {e}")
+                print(f"Error in heartbeat loop: {e}")
 
     async def broadcast(self, message: P2PMessage):
         """Broadcast message to all peers"""
@@ -197,20 +197,20 @@ class P2PManager:
                 if client.is_connected():
                     await client.send(message)
             except Exception as e:
-                print(f"❌ Error broadcasting to {client.peer_id}: {e}")
+                print(f"Error broadcasting to {client.peer_id}: {e}")
 
         # Broadcast to server's connected clients (peers that connected to us)
         if self.server:
             try:
                 await self.server.broadcast(message)
             except Exception as e:
-                print(f"❌ Error broadcasting from server: {e}")
+                print(f"Error broadcasting from server: {e}")
 
     async def send_to_peer(self, peer_id: str, message: P2PMessage) -> bool:
         """Send message to specific peer"""
         client = self.clients.get(peer_id)
         if not client:
-            print(f"⚠️ Peer {peer_id} not found")
+            print(f"Peer {peer_id} not found")
             return False
 
         return await client.send(message)

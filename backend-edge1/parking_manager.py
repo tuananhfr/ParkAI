@@ -41,7 +41,7 @@ def _load_parking_fees():
                 with open(json_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
     except Exception as e:
-        print(f"⚠️ Failed to load parking fees: {e}")
+        print(f"Failed to load parking fees: {e}")
     
     # Fallback về giá trị mặc định từ config
     return {
@@ -126,7 +126,7 @@ class ParkingManager:
                                 self._subscription_cache = []
                                 self._subscription_cache_time = now
                 except Exception as e:
-                    print(f"⚠️ Failed to fetch subscriptions: {e}")
+                    print(f"Failed to fetch subscriptions: {e}")
                     self._subscription_cache = []
                     self._subscription_cache_time = now
 
@@ -186,7 +186,7 @@ class ParkingManager:
             }
 
         except Exception as e:
-            print(f"❌ Error checking subscription: {e}")
+            print(f"Error checking subscription: {e}")
             return {
                 "is_subscriber": False,
                 "type": None,
@@ -238,7 +238,7 @@ class ParkingManager:
 
         if not plate_id:
             clean_attempt = re.sub(r'[^A-Z0-9]', '', plate_text.upper()) if plate_text else None
-            print(f"❌ Validate plate failed: '{plate_text}' (after clean: '{clean_attempt}')")
+            print(f"Validate plate failed: '{plate_text}' (after clean: '{clean_attempt}')")
             return {
                 "success": False,
                 "error": f"Biển số không hợp lệ: {plate_text}"
@@ -317,7 +317,7 @@ class ParkingManager:
             # Thuê bao → Miễn phí
             fee = 0
             customer_type = subscription_info.get('type', 'subscription')  # company, monthly
-            print(f"✅ Xe {display_text} là THUÊ BAO ({customer_type}) - Miễn phí")
+            print(f"Xe {display_text} là THUÊ BAO ({customer_type}) - Miễn phí")
         else:
             # Khách lẻ → Tính phí bình thường
             fee = self.calculate_fee(entry['entry_time'], datetime.now())
@@ -413,7 +413,7 @@ class ParkingManager:
 
             return fee
         except Exception as e:
-            print(f"⚠️ Error calculating fee: {e}")
+            print(f"Error calculating fee: {e}")
             return 0
 
     def get_history(self, limit=100, today_only=False, status=None):

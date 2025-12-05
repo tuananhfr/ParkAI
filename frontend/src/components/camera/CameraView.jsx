@@ -610,7 +610,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           enabled: true,
         });
 
-        setNotificationMessage("✅ Barrier đã đóng thành công!");
+        setNotificationMessage("Barrier đã đóng thành công!");
         setTimeout(() => {
           setNotificationMessage(null);
         }, 3000);
@@ -629,7 +629,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
         plateTextRef.current = "";
         setBarrierOpenedPlate(null);
       } else {
-        setNotificationMessage(`❌ ${result.error || "Không thể đóng cửa"}`);
+        setNotificationMessage(`${result.error || "Không thể đóng cửa"}`);
         setTimeout(() => {
           setNotificationMessage(null);
         }, 5000);
@@ -732,13 +732,13 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           onHistoryUpdate();
         }
       } else {
-        setNotificationMessage(`❌ ${result.error || "Không thể mở cửa"}`);
+        setNotificationMessage(`${result.error || "Không thể mở cửa"}`);
         setTimeout(() => {
           setNotificationMessage(null);
         }, 5000);
       }
     } catch (err) {
-      setNotificationMessage(`❌ Lỗi kết nối: ${err.message}`);
+      setNotificationMessage(`Lỗi kết nối: ${err.message}`);
       setTimeout(() => {
         setNotificationMessage(null);
       }, 5000);

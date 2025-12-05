@@ -53,7 +53,7 @@ class P2PClient:
             await self.websocket.close()
 
         self.connected = False
-        print(f"✅ P2P Client to {self.peer_id} stopped")
+        print(f"P2P Client to {self.peer_id} stopped")
 
     async def _connection_loop(self):
         """Maintain connection with auto-reconnect"""
@@ -62,7 +62,7 @@ class P2PClient:
                 await self._connect()
 
             except Exception as e:
-                print(f"❌ P2P Client {self.peer_id} error: {e}")
+                print(f"P2P Client {self.peer_id} error: {e}")
 
             if self.running:
                 print(f"🔄 Reconnecting to {self.peer_id} in {self.reconnect_delay}s...")
@@ -80,7 +80,7 @@ class P2PClient:
             ) as websocket:
                 self.websocket = websocket
                 self.connected = True
-                print(f"✅ Connected to P2P peer {self.peer_id}")
+                print(f"Connected to P2P peer {self.peer_id}")
 
                 # Call connected callback
                 if self.on_connected:
@@ -94,7 +94,7 @@ class P2PClient:
             print(f"🔌 Disconnected from P2P peer {self.peer_id}")
 
         except Exception as e:
-            print(f"❌ Error connecting to {self.peer_id}: {e}")
+            print(f"Error connecting to {self.peer_id}: {e}")
 
         finally:
             self.connected = False
@@ -112,13 +112,13 @@ class P2PClient:
 
             # Skip error messages
             if data.get("type") == "ERROR":
-                print(f"⚠️ Error from peer {self.peer_id}: {data.get('error')}")
+                print(f"Error from peer {self.peer_id}: {data.get('error')}")
                 return
 
             # Validate message
             is_valid, error = validate_message(data)
             if not is_valid:
-                print(f"⚠️ Invalid message from {self.peer_id}: {error}")
+                print(f"Invalid message from {self.peer_id}: {error}")
                 return
 
             # Convert to P2PMessage
@@ -133,10 +133,10 @@ class P2PClient:
                 await self.on_message(p2p_msg, self.peer_id)
 
         except json.JSONDecodeError as e:
-            print(f"⚠️ Invalid JSON from {self.peer_id}: {e}")
+            print(f"Invalid JSON from {self.peer_id}: {e}")
 
         except Exception as e:
-            print(f"❌ Error processing message from {self.peer_id}: {e}")
+            print(f"Error processing message from {self.peer_id}: {e}")
             import traceback
             traceback.print_exc()
 
@@ -151,12 +151,12 @@ class P2PClient:
             return True
 
         except websockets.exceptions.ConnectionClosed:
-            print(f"⚠️ Cannot send to {self.peer_id}: Connection closed")
+            print(f"Cannot send to {self.peer_id}: Connection closed")
             self.connected = False
             return False
 
         except Exception as e:
-            print(f"❌ Error sending to {self.peer_id}: {e}")
+            print(f"Error sending to {self.peer_id}: {e}")
             return False
 
     def is_connected(self) -> bool:

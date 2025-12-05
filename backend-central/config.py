@@ -52,7 +52,7 @@ CENTRAL_SYNC_SERVERS = os.getenv("CENTRAL_SYNC_SERVERS", "[]")  # Ví dụ: '["h
 EDGE_CAMERAS = {
     1: {
         "name": "Cổng A",
-        "camera_type": "EXIT",
+        "camera_type": "ENTRY",
         "base_url": os.getenv("EDGE1_URL", "http://192.168.0.144:5000"),
         "ws_url": os.getenv(
             "EDGE1_WS_URL", "ws://192.168.0.144:5000/ws/detections"

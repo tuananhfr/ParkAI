@@ -39,7 +39,7 @@ const PlateInput = ({
 
     if (!normalizedPlate || normalizedPlate.length < 5) {
       if (onPlateConfirm) {
-        onPlateConfirm(null, "⚠️ Biển số phải có ít nhất 5 ký tự!");
+        onPlateConfirm(null, "Biển số phải có ít nhất 5 ký tự!");
       }
       return;
     }
@@ -48,7 +48,7 @@ const PlateInput = ({
       if (onPlateConfirm) {
         onPlateConfirm(
           null,
-          "⚠️ Biển số không hợp lệ! Vui lòng nhập đúng định dạng (VD: 30A12345)"
+          "Biển số không hợp lệ! Vui lòng nhập đúng định dạng (VD: 30A12345)"
         );
       }
       return;
@@ -57,7 +57,7 @@ const PlateInput = ({
     setInputValue(normalizedPlate);
     setIsEditing(false);
     if (onPlateConfirm) {
-      onPlateConfirm(normalizedPlate, "✅ Đã cập nhật biển số!");
+      onPlateConfirm(normalizedPlate, "Đã cập nhật biển số!");
     }
   };
 

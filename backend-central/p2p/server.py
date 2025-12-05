@@ -30,10 +30,10 @@ class P2PServer:
                 self.port
             )
             self.running = True
-            print(f"✅ P2P Server started on ws://{self.host}:{self.port}")
+            print(f"P2P Server started on ws://{self.host}:{self.port}")
 
         except Exception as e:
-            print(f"❌ Failed to start P2P server: {e}")
+            print(f"Failed to start P2P server: {e}")
             raise
 
     async def stop(self):
@@ -52,7 +52,7 @@ class P2PServer:
             self.server.close()
             await self.server.wait_closed()
 
-        print("✅ P2P Server stopped")
+        print("P2P Server stopped")
 
     async def _handle_client(self, websocket: websockets.WebSocketServerProtocol, path: str):
         """Handle incoming client connection"""
@@ -69,7 +69,7 @@ class P2PServer:
             print(f"🔌 P2P peer disconnected: {peer_address}")
 
         except Exception as e:
-            print(f"❌ Error handling P2P client {peer_address}: {e}")
+            print(f"Error handling P2P client {peer_address}: {e}")
 
         finally:
             self.clients.discard(websocket)
@@ -83,7 +83,7 @@ class P2PServer:
             # Validate message
             is_valid, error = validate_message(data)
             if not is_valid:
-                print(f"⚠️ Invalid P2P message: {error}")
+                print(f"Invalid P2P message: {error}")
                 await self._send_error(websocket, error)
                 return
 
@@ -95,11 +95,11 @@ class P2PServer:
                 await self.on_message(p2p_msg)
 
         except json.JSONDecodeError as e:
-            print(f"⚠️ Invalid JSON from peer: {e}")
+            print(f"Invalid JSON from peer: {e}")
             await self._send_error(websocket, "Invalid JSON")
 
         except Exception as e:
-            print(f"❌ Error processing P2P message: {e}")
+            print(f"Error processing P2P message: {e}")
             import traceback
             traceback.print_exc()
 
@@ -114,7 +114,7 @@ class P2PServer:
             await websocket.send(error_msg)
 
         except Exception as e:
-            print(f"❌ Error sending error message: {e}")
+            print(f"Error sending error message: {e}")
 
     async def broadcast(self, message: P2PMessage):
         """Broadcast message to all connected peers"""
@@ -132,7 +132,7 @@ class P2PServer:
                 disconnected.add(client)
 
             except Exception as e:
-                print(f"❌ Error broadcasting to peer: {e}")
+                print(f"Error broadcasting to peer: {e}")
                 disconnected.add(client)
 
         # Remove disconnected clients

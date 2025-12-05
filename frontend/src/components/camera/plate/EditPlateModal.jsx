@@ -17,13 +17,13 @@ const EditPlateModal = ({
     const normalizedPlate = editPlateText.trim().toUpperCase();
 
     if (!normalizedPlate || normalizedPlate.length < 5) {
-      onNotification("⚠️ Biển số phải có ít nhất 5 ký tự!");
+      onNotification("Biển số phải có ít nhất 5 ký tự!");
       return;
     }
 
     if (!validatePlateNumber(normalizedPlate)) {
       onNotification(
-        "⚠️ Biển số không hợp lệ! Vui lòng nhập đúng định dạng (VD: 30A12345)"
+        "Biển số không hợp lệ! Vui lòng nhập đúng định dạng (VD: 30A12345)"
       );
       return;
     }

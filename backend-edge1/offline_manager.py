@@ -40,7 +40,7 @@ class OfflineManager:
         """)
         conn.commit()
         conn.close()
-        print(f"✅ Offline queue DB initialized: {self.db_file}")
+        print(f"Offline queue DB initialized: {self.db_file}")
 
     async def send_event(
         self,
@@ -71,7 +71,7 @@ class OfflineManager:
 
                 if response.status_code == 200:
                     self.is_online = True
-                    print(f"✅ Event synced: {event_type} - {event_data.get('plate_id')}")
+                    print(f"Event synced: {event_type} - {event_data.get('plate_id')}")
                     return True, None
                 else:
                     raise Exception(f"HTTP {response.status_code}: {response.text}")
@@ -80,7 +80,7 @@ class OfflineManager:
             # Central DOWN → FALLBACK
             self.is_online = False
             error_msg = f"Central offline: {type(e).__name__}"
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
 
             # Queue event locally
             self._queue_event(event_type, event_data, str(e))
@@ -92,7 +92,7 @@ class OfflineManager:
             return False, error_msg
 
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
+            print(f"Unexpected error: {e}")
             return False, str(e)
 
     def _queue_event(self, event_type: str, event_data: dict, error: str):
@@ -127,7 +127,7 @@ class OfflineManager:
                 is_healthy = await self._check_central_health()
 
                 if is_healthy and not self.is_online:
-                    print("✅ Central is back online!")
+                    print("Central is back online!")
                     self.is_online = True
 
                 if is_healthy:
@@ -138,7 +138,7 @@ class OfflineManager:
                 await asyncio.sleep(30)
 
             except Exception as e:
-                print(f"❌ Retry worker error: {e}")
+                print(f"Retry worker error: {e}")
                 await asyncio.sleep(30)
 
     async def _check_central_health(self) -> bool:
@@ -182,7 +182,7 @@ class OfflineManager:
                         # Success → Delete
                         conn.execute("DELETE FROM pending_events WHERE id=?", (event_id,))
                         conn.commit()
-                        print(f"✅ Replayed: {event_type} - {event_data.get('plate_id')}")
+                        print(f"Replayed: {event_type} - {event_data.get('plate_id')}")
                     else:
                         # Failed → Update retry count
                         conn.execute("""
@@ -197,10 +197,10 @@ class OfflineManager:
                             event_id
                         ))
                         conn.commit()
-                        print(f"⚠️  Retry failed: {event_type} - {event_data.get('plate_id')}")
+                        print(f" Retry failed: {event_type} - {event_data.get('plate_id')}")
 
             except Exception as e:
-                print(f"❌ Replay error: {e}")
+                print(f"Replay error: {e}")
                 # Update retry count
                 conn.execute("""
                     UPDATE pending_events

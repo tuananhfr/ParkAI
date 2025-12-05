@@ -41,7 +41,7 @@ class P2PEventHandler:
 
             # Check duplicate - nếu đã có event_id này rồi thì skip
             if self._event_exists(event_id):
-                print(f"⚠️ Event {event_id} already exists, skipping")
+                print(f"Event {event_id} already exists, skipping")
                 return
 
             # Check conflict - nếu xe này đã vào từ central khác
@@ -65,10 +65,10 @@ class P2PEventHandler:
                 source="p2p_sync"
             )
 
-            print(f"✅ Synced ENTRY from {source_central}: {plate_view} ({event_id})")
+            print(f"Synced ENTRY from {source_central}: {plate_view} ({event_id})")
 
         except Exception as e:
-            print(f"❌ Error handling VEHICLE_ENTRY_PENDING: {e}")
+            print(f"Error handling VEHICLE_ENTRY_PENDING: {e}")
             traceback.print_exc()
 
     async def handle_vehicle_entry_confirmed(self, message: P2PMessage):
@@ -89,10 +89,10 @@ class P2PEventHandler:
             # Nếu cần phân biệt, có thể thêm column 'barrier_status'
 
             # Hiện tại chỉ log
-            print(f"✅ Entry {event_id} confirmed at {confirmed_time}")
+            print(f"Entry {event_id} confirmed at {confirmed_time}")
 
         except Exception as e:
-            print(f"❌ Error handling VEHICLE_ENTRY_CONFIRMED: {e}")
+            print(f"Error handling VEHICLE_ENTRY_CONFIRMED: {e}")
             traceback.print_exc()
 
     async def handle_vehicle_exit(self, message: P2PMessage):
@@ -131,12 +131,12 @@ class P2PEventHandler:
             )
 
             if success:
-                print(f"✅ Synced EXIT from {exit_central}: event {event_id}, fee {fee}")
+                print(f"Synced EXIT from {exit_central}: event {event_id}, fee {fee}")
             else:
-                print(f"⚠️ Failed to update exit for event {event_id} - entry not found")
+                print(f"Failed to update exit for event {event_id} - entry not found")
 
         except Exception as e:
-            print(f"❌ Error handling VEHICLE_EXIT: {e}")
+            print(f"Error handling VEHICLE_EXIT: {e}")
             traceback.print_exc()
 
     async def _resolve_conflict(self, existing_entry: dict, new_message: P2PMessage):
@@ -152,7 +152,7 @@ class P2PEventHandler:
             if not existing_event_id:
                 # Entry cũ không có event_id (tạo trước khi có P2P)
                 # Giữ entry cũ
-                print(f"⚠️ Conflict: Keeping old entry (no event_id)")
+                print(f"Conflict: Keeping old entry (no event_id)")
                 return
 
             # Parse timestamp từ event_id (format: central-1_timestamp_plate_id)
@@ -160,7 +160,7 @@ class P2PEventHandler:
             new_timestamp = self._parse_timestamp_from_event_id(new_event_id)
 
             if existing_timestamp is None or new_timestamp is None:
-                print(f"⚠️ Cannot parse timestamp, keeping existing entry")
+                print(f"Cannot parse timestamp, keeping existing entry")
                 return
 
             if new_timestamp < existing_timestamp:
@@ -187,16 +187,16 @@ class P2PEventHandler:
                     source="p2p_sync"
                 )
 
-                print(f"✅ Replaced with older entry from {new_message.source_central}")
+                print(f"Replaced with older entry from {new_message.source_central}")
 
             else:
                 # Entry hiện tại CŨ HƠN → giữ nguyên, ignore message mới
-                print(f"⚠️ Conflict: Local entry is older, ignoring new entry")
+                print(f"Conflict: Local entry is older, ignoring new entry")
                 print(f"   Local: {existing_event_id} (ts={existing_timestamp})")
                 print(f"   Remote: {new_event_id} (ts={new_timestamp})")
 
         except Exception as e:
-            print(f"❌ Error resolving conflict: {e}")
+            print(f"Error resolving conflict: {e}")
             traceback.print_exc()
 
     def _event_exists(self, event_id: str) -> bool:

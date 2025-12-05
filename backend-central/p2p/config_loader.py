@@ -32,7 +32,7 @@ class P2PConfig:
             self._validate_config()
 
         except Exception as e:
-            print(f"⚠️ Error loading P2P config: {e}")
+            print(f"Error loading P2P config: {e}")
             self._create_default_config()
 
     def _create_default_config(self):
@@ -56,7 +56,7 @@ class P2PConfig:
         self.this_central = default_config["this_central"]
         self.peer_centrals = default_config["peer_centrals"]
 
-        print(f"✅ Created default P2P config: {self.config_file}")
+        print(f"Created default P2P config: {self.config_file}")
 
     def _validate_config(self):
         """Validate config"""
@@ -112,7 +112,7 @@ class P2PConfig:
             return True
 
         except Exception as e:
-            print(f"❌ Error saving P2P config: {e}")
+            print(f"Error saving P2P config: {e}")
             return False
 
     def update_this_central(self, central_id: str, ip: str, p2p_port: int, api_port: int):

@@ -51,7 +51,7 @@ class CameraRegistry:
                 self._check_offline_cameras()
                 time.sleep(10)  # Check mỗi 10 giây
             except Exception as e:
-                print(f"❌ Camera registry error: {e}")
+                print(f"Camera registry error: {e}")
 
     def _check_offline_cameras(self):
         """Mark cameras as offline if no heartbeat"""

@@ -4,7 +4,7 @@ Main FastAPI Application
 from typing import Set
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from av import VideoFrame
 import uvicorn
@@ -13,6 +13,7 @@ import json
 import numpy as np
 import os
 from pathlib import Path
+import cv2
 
 import config
 import json
@@ -295,6 +296,102 @@ async def status():
         "active_webrtc": len(pcs)
     }
 
+
+# ==================== MJPEG Streaming (for PyQt6 Desktop App) ====================
+
+# Cache để broadcast frames đến nhiều clients mà chỉ encode 1 lần
+# FIX: Mỗi stream có timestamp riêng để tránh collision
+_mjpeg_cache = {
+    "raw": {"data": None, "timestamp": 0},
+    "annotated": {"data": None, "timestamp": 0}
+}
+
+def generate_mjpeg_frames(annotated: bool = True):
+    """
+    Generator function để stream MJPEG frames
+    SỬ DỤNG CACHE để broadcast 1 frame đến NHIỀU clients (tiết kiệm CPU!)
+
+    Args:
+        annotated: True để stream annotated frames (với boxes), False để stream raw
+
+    Yields:
+        JPEG frames in multipart format
+    """
+    import time
+
+    while True:
+        if camera_manager is None:
+            # Return blank frame if camera not ready
+            blank = np.zeros((config.RESOLUTION_HEIGHT, config.RESOLUTION_WIDTH, 3), dtype=np.uint8)
+            _, buffer = cv2.imencode('.jpg', blank, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            frame_bytes = buffer.tobytes()
+        else:
+            # Check cache (30 FPS = 33ms per frame)
+            now = time.time()
+            cache_key = "annotated" if annotated else "raw"
+
+            # Nếu cache mới hơn 30ms → dùng lại (broadcast)
+            if _mjpeg_cache[cache_key]["data"] and (now - _mjpeg_cache[cache_key]["timestamp"]) < 0.033:
+                frame_bytes = _mjpeg_cache[cache_key]["data"]
+            else:
+                # Encode frame mới
+                if annotated:
+                    frame = camera_manager.get_annotated_frame()
+                else:
+                    frame = camera_manager.get_raw_frame()
+
+                if frame is None or frame.size == 0:
+                    # Return blank frame if no frame available
+                    blank = np.zeros((config.RESOLUTION_HEIGHT, config.RESOLUTION_WIDTH, 3), dtype=np.uint8)
+                    frame = blank
+
+                # Encode frame as JPEG (chỉ 1 lần!)
+                # Quality 85 = good balance between size and quality
+                _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                frame_bytes = buffer.tobytes()
+
+                # Lưu vào cache để broadcast
+                _mjpeg_cache[cache_key]["data"] = frame_bytes
+                _mjpeg_cache[cache_key]["timestamp"] = now
+
+        # Yield frame in multipart format
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+        # Sleep để giữ ~30 FPS (không spam quá nhanh)
+        time.sleep(0.033)  # ~30 FPS
+
+
+@app.get("/api/stream/raw")
+async def stream_raw():
+    """
+    MJPEG stream endpoint - raw camera feed (no annotations)
+    Perfect for PyQt6 desktop app - simple, stable, low latency
+
+    Usage in PyQt6:
+        cv2.VideoCapture("http://edge-ip:8000/api/stream/raw")
+    """
+    return StreamingResponse(
+        generate_mjpeg_frames(annotated=False),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.get("/api/stream/annotated")
+async def stream_annotated():
+    """
+    MJPEG stream endpoint - annotated feed (with detection boxes)
+    Perfect for PyQt6 desktop app - simple, stable, low latency
+
+    Usage in PyQt6:
+        cv2.VideoCapture("http://edge-ip:8000/api/stream/annotated")
+    """
+    return StreamingResponse(
+        generate_mjpeg_frames(annotated=True),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
 @app.post("/offer")
 async def webrtc_offer(request: Request):
     """WebRTC offer endpoint"""
@@ -321,24 +418,6 @@ async def webrtc_offer(request: Request):
 
         await pc.setRemoteDescription(offer)
         answer = await pc.createAnswer()
-
-        # ===== BITRATE CONTROL: Modify SDP để set max bitrate =====
-        # Thêm bitrate constraints cho video để giảm độ mờ
-        sdp_lines = answer.sdp.split("\r\n")
-        modified_sdp = []
-
-        for line in sdp_lines:
-            modified_sdp.append(line)
-            # Thêm bitrate cho video track (sau dòng m=video)
-            if line.startswith("m=video"):
-                modified_sdp.append("b=AS:2500")      # 2.5 Mbps (Application Specific)
-                modified_sdp.append("b=TIAS:2500000") # 2.5 Mbps (Transport Independent)
-
-        # Create modified answer với bitrate constraints
-        answer = RTCSessionDescription(
-            sdp="\r\n".join(modified_sdp),
-            type="answer"
-        )
 
         await pc.setLocalDescription(answer)
 
@@ -408,23 +487,11 @@ async def webrtc_offer_annotated(request: Request):
         pc.addTrack(annotated_track)
 
         await pc.setRemoteDescription(offer)
+        # Tạo SDP answer
+        # NOTE: Không chỉnh sửa SDP để tránh bug aiortc khi cả hai đầu đều là aiortc
+        # (ValueError: None is not in list trong and_direction).
+        # Nếu cần control bitrate, nên làm bằng cách khác an toàn hơn.
         answer = await pc.createAnswer()
-
-        # ===== BITRATE CONTROL: Modify SDP để set max bitrate =====
-        sdp_lines = answer.sdp.split("\r\n")
-        modified_sdp = []
-
-        for line in sdp_lines:
-            modified_sdp.append(line)
-            if line.startswith("m=video"):
-                modified_sdp.append("b=AS:2500")      # 2.5 Mbps
-                modified_sdp.append("b=TIAS:2500000") # 2.5 Mbps
-
-        answer = RTCSessionDescription(
-            sdp="\r\n".join(modified_sdp),
-            type="answer"
-        )
-
         await pc.setLocalDescription(answer)
 
         return JSONResponse({
@@ -750,7 +817,7 @@ async def init_sync_with_central(request: Request):
         )
         central_sync.start()
 
-        print(f"✅ [Edge] Sync với Central enabled: {central_url}")
+        print(f"[Edge] Sync với Central enabled: {central_url}")
 
         return JSONResponse({
             "success": True,
@@ -819,11 +886,11 @@ async def update_config(request: Request):
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     response = await client.post(sync_endpoint, json=sync_config)
                     if response.status_code == 200:
-                        print(f"✅ [Config Sync] Đã sync config đến central: {central_url}")
+                        print(f"[Config Sync] Đã sync config đến central: {central_url}")
                     else:
-                        print(f"⚠️ [Config Sync] Lỗi sync đến central: HTTP {response.status_code}")
+                        print(f"[Config Sync] Lỗi sync đến central: HTTP {response.status_code}")
             except Exception as e:
-                print(f"⚠️ [Config Sync] Không thể sync config đến central: {e}")
+                print(f"[Config Sync] Không thể sync config đến central: {e}")
         
         return JSONResponse({
             "success": True,
@@ -906,7 +973,7 @@ async def close_barrier(request: Request):
                         **clean_result,
                     })
                 except Exception as e:
-                    print(f"⚠️ Failed to broadcast history update: {e}")
+                    print(f"Failed to broadcast history update: {e}")
 
                 # Sync to Central (nếu có) - GỬI ĐẦY ĐỦ THÔNG TIN
                 if central_sync:
@@ -1064,7 +1131,7 @@ async def update_history_entry(history_id: int, request: Request):
             try:
                 await broadcast_history_update({"type": "updated", "history_id": history_id})
             except Exception as e:
-                print(f"⚠️ Failed to broadcast history update (updated): {e}")
+                print(f"Failed to broadcast history update (updated): {e}")
 
             return JSONResponse({"success": True})
         else:
@@ -1093,7 +1160,7 @@ async def delete_history_entry(history_id: int):
             try:
                 await broadcast_history_update({"type": "deleted", "history_id": history_id})
             except Exception as e:
-                print(f"⚠️ Failed to broadcast history update (deleted): {e}")
+                print(f"Failed to broadcast history update (deleted): {e}")
 
             return JSONResponse({"success": True})
         else:

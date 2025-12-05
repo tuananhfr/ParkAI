@@ -57,7 +57,7 @@ class P2PSyncManager:
                     return int(week_ago.timestamp() * 1000)
 
         except Exception as e:
-            print(f"❌ Error getting last sync timestamp: {e}")
+            print(f"Error getting last sync timestamp: {e}")
             return 0
 
     def update_last_sync_timestamp(self, peer_id: str, timestamp_ms: int):
@@ -82,10 +82,10 @@ class P2PSyncManager:
                 conn.commit()
                 conn.close()
 
-                print(f"✅ Updated last sync timestamp for {peer_id}: {timestamp_ms}")
+                print(f"Updated last sync timestamp for {peer_id}: {timestamp_ms}")
 
         except Exception as e:
-            print(f"❌ Error updating last sync timestamp: {e}")
+            print(f"Error updating last sync timestamp: {e}")
 
     async def request_sync_from_peer(self, peer_id: str):
         """
@@ -109,12 +109,12 @@ class P2PSyncManager:
             success = await self.p2p_manager.send_to_peer(peer_id, message)
 
             if success:
-                print(f"✅ Sent SYNC_REQUEST to {peer_id}")
+                print(f"Sent SYNC_REQUEST to {peer_id}")
             else:
-                print(f"⚠️ Failed to send SYNC_REQUEST to {peer_id}")
+                print(f"Failed to send SYNC_REQUEST to {peer_id}")
 
         except Exception as e:
-            print(f"❌ Error requesting sync from {peer_id}: {e}")
+            print(f"Error requesting sync from {peer_id}: {e}")
             import traceback
             traceback.print_exc()
 
@@ -158,10 +158,10 @@ class P2PSyncManager:
 
             await self.p2p_manager.send_to_peer(from_peer_id, response)
 
-            print(f"✅ Sent SYNC_RESPONSE to {from_peer_id}")
+            print(f"Sent SYNC_RESPONSE to {from_peer_id}")
 
         except Exception as e:
-            print(f"❌ Error handling SYNC_REQUEST: {e}")
+            print(f"Error handling SYNC_REQUEST: {e}")
             import traceback
             traceback.print_exc()
 
@@ -240,18 +240,18 @@ class P2PSyncManager:
                         )
 
                 except Exception as e:
-                    print(f"⚠️ Error merging event {event_id}: {e}")
+                    print(f"Error merging event {event_id}: {e}")
                     skipped_count += 1
                     continue
 
-            print(f"✅ Merged {merged_count} events, skipped {skipped_count}")
+            print(f"Merged {merged_count} events, skipped {skipped_count}")
 
             # Update last sync timestamp to now
             now_ms = int(datetime.now().timestamp() * 1000)
             self.update_last_sync_timestamp(from_peer_id, now_ms)
 
         except Exception as e:
-            print(f"❌ Error handling SYNC_RESPONSE: {e}")
+            print(f"Error handling SYNC_RESPONSE: {e}")
             import traceback
             traceback.print_exc()
 

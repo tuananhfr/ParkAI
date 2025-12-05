@@ -183,7 +183,7 @@ class CameraManager:
                     request.release()
 
             except Exception as e:
-                print(f"❌ Capture error: {e}")
+                print(f"Capture error: {e}")
                 import traceback
                 traceback.print_exc()
                 time.sleep(0.001)
@@ -270,5 +270,5 @@ class CameraManager:
             return frame
 
         except Exception as e:
-            print(f"❌ Draw boxes error: {e}")
+            print(f"Draw boxes error: {e}")
             return frame

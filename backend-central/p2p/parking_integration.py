@@ -62,7 +62,7 @@ class P2PParkingBroadcaster:
             print(f"📡 Broadcasted ENTRY_PENDING: {plate_view} ({event_id})")
 
         except Exception as e:
-            print(f"❌ Error broadcasting entry pending: {e}")
+            print(f"Error broadcasting entry pending: {e}")
 
     async def broadcast_entry_confirmed(
         self,
@@ -88,7 +88,7 @@ class P2PParkingBroadcaster:
             print(f"📡 Broadcasted ENTRY_CONFIRMED: {event_id}")
 
         except Exception as e:
-            print(f"❌ Error broadcasting entry confirmed: {e}")
+            print(f"Error broadcasting entry confirmed: {e}")
 
     async def broadcast_exit(
         self,
@@ -121,4 +121,4 @@ class P2PParkingBroadcaster:
             print(f"📡 Broadcasted EXIT: {event_id}, fee {fee}")
 
         except Exception as e:
-            print(f"❌ Error broadcasting exit: {e}")
+            print(f"Error broadcasting exit: {e}")

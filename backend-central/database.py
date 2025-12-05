@@ -157,7 +157,7 @@ class CentralDatabase:
                 return history_id
             except Exception as e:
                 conn.rollback()
-                print(f"❌ Error adding vehicle entry: {e}")
+                print(f"Error adding vehicle entry: {e}")
                 raise
             finally:
                 conn.close()
@@ -461,7 +461,7 @@ class CentralDatabase:
                 return True
             except Exception as e:
                 conn.rollback()
-                print(f"❌ Error updating history entry: {e}")
+                print(f"Error updating history entry: {e}")
                 return False
             finally:
                 conn.close()
@@ -504,7 +504,7 @@ class CentralDatabase:
                 return True
             except Exception as e:
                 conn.rollback()
-                print(f"❌ Error deleting history entry: {e}")
+                print(f"Error deleting history entry: {e}")
                 return False
             finally:
                 conn.close()

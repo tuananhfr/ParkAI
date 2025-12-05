@@ -40,7 +40,7 @@ def _load_parking_fees():
                 with open(json_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
     except Exception as e:
-        print(f"⚠️ Failed to load parking fees: {e}")
+        print(f"Failed to load parking fees: {e}")
     
     # Fallback về giá trị mặc định từ config
     return {

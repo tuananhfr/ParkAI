@@ -4,9 +4,9 @@ Central Backend Server - Tổng hợp data từ tất cả Edge cameras
 from typing import Any, Dict, Set
 import socket
 
-from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 import uvicorn
 import httpx
 import json
@@ -71,7 +71,7 @@ def get_local_ip() -> str:
         s.close()
         return ip
     except Exception as e:
-        print(f"⚠️  Could not auto-detect IP: {e}")
+        print(f" Could not auto-detect IP: {e}")
         return "127.0.0.1"  # Fallback to localhost
 
 
@@ -408,7 +408,7 @@ async def camera_broadcast_loop():
                 
         except Exception as e:
             import traceback
-            print(f"❌ Camera broadcast loop error: {e}")
+            print(f"Camera broadcast loop error: {e}")
             traceback.print_exc()
             await asyncio.sleep(5)
 
@@ -457,7 +457,7 @@ async def startup():
                 p2p_config["this_central"]["ip"] = local_ip
                 with open(p2p_config_path, "w", encoding="utf-8") as f:
                     json.dump(p2p_config, f, indent=2, ensure_ascii=False)
-                print(f"✅ Updated P2P config IP: {current_ip} → {local_ip}")
+                print(f"Updated P2P config IP: {current_ip} → {local_ip}")
 
         # Initialize P2P Manager
         p2p_manager = P2PManager()
@@ -502,11 +502,11 @@ async def startup():
         edge_api.set_dependencies(database, parking_state, p2p_broadcaster)
         p2p_api_extensions.set_database(database)
 
-        print("✅ P2P system initialized successfully")
+        print("P2P system initialized successfully")
 
     except Exception as e:
         import traceback
-        print("❌ Error during startup:")
+        print("Error during startup:")
         traceback.print_exc()
 
 
@@ -521,7 +521,7 @@ async def shutdown():
     if p2p_manager:
         print("🔄 Stopping P2P system...")
         await p2p_manager.stop()
-        print("✅ P2P system stopped")
+        print("P2P system stopped")
 
 
 
@@ -642,7 +642,7 @@ async def receive_heartbeat(request: Request):
             asyncio.create_task(broadcast_camera_update())
         except Exception as broadcast_err:
             # Log but don't fail the heartbeat
-            print(f"⚠️ Failed to broadcast camera update: {broadcast_err}")
+            print(f"Failed to broadcast camera update: {broadcast_err}")
 
         return JSONResponse({"success": True})
 
@@ -1299,7 +1299,7 @@ async def sync_edge_config(request: Request):
             
             if not camera_exists:
                 # Thêm camera mới vào config
-                print(f"✅ [Edge Sync] Thêm camera edge mới: {cam_id_int} ({edge_name}) từ {edge_ip}")
+                print(f"[Edge Sync] Thêm camera edge mới: {cam_id_int} ({edge_name}) từ {edge_ip}")
             else:
                 # Cập nhật camera hiện có
                 current_cam = current_edge_cameras.get(cam_id_int) or current_edge_cameras.get(str(cam_id_int))
@@ -1389,6 +1389,102 @@ async def proxy_camera_offer_annotated(camera_id: int, request: Request):
     payload = await request.json()
     data = await _proxy_webrtc_offer(camera_id, payload, annotated=True)
     return JSONResponse(data)
+
+
+# ==================== MJPEG Stream Proxy (for Desktop App) ====================
+
+@app.get("/api/stream/raw")
+async def proxy_mjpeg_stream_raw(camera_id: int = Query(default=1)):
+    """
+    Proxy MJPEG stream từ Edge camera (raw feed)
+
+    Args:
+        camera_id: ID của camera cần stream (default=1)
+
+    Returns:
+        MJPEG stream từ Edge camera
+    """
+    # Get camera with enriched data (including control_proxy)
+    status = _enrich_camera_status(camera_registry.get_camera_status())
+    cameras = status.get("cameras", [])
+    camera = next((c for c in cameras if c['id'] == camera_id), None)
+
+    if not camera:
+        return JSONResponse({"error": "Camera not found"}, status_code=404)
+
+    # Get Edge URL from control_proxy
+    control_proxy = camera.get("control_proxy")
+    if not control_proxy or not control_proxy.get("available"):
+        return JSONResponse({"error": "Camera control proxy not available"}, status_code=500)
+
+    edge_url = control_proxy.get("base_url")
+    if not edge_url:
+        return JSONResponse({"error": "Edge URL not configured in control_proxy"}, status_code=500)
+
+    # Build Edge stream URL
+    if not edge_url.startswith("http"):
+        edge_url = f"http://{edge_url}"
+
+    stream_url = f"{edge_url}/api/stream/raw"
+
+    # Proxy stream từ Edge
+    async def stream_generator():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            async with client.stream("GET", stream_url) as response:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@app.get("/api/stream/annotated")
+async def proxy_mjpeg_stream_annotated(camera_id: int = Query(default=1)):
+    """
+    Proxy MJPEG stream từ Edge camera (annotated feed với boxes)
+
+    Args:
+        camera_id: ID của camera cần stream (default=1)
+
+    Returns:
+        MJPEG stream từ Edge camera
+    """
+    # Get camera with enriched data (including control_proxy)
+    status = _enrich_camera_status(camera_registry.get_camera_status())
+    cameras = status.get("cameras", [])
+    camera = next((c for c in cameras if c['id'] == camera_id), None)
+
+    if not camera:
+        return JSONResponse({"error": "Camera not found"}, status_code=404)
+
+    # Get Edge URL from control_proxy
+    control_proxy = camera.get("control_proxy")
+    if not control_proxy or not control_proxy.get("available"):
+        return JSONResponse({"error": "Camera control proxy not available"}, status_code=500)
+
+    edge_url = control_proxy.get("base_url")
+    if not edge_url:
+        return JSONResponse({"error": "Edge URL not configured in control_proxy"}, status_code=500)
+
+    # Build Edge stream URL
+    if not edge_url.startswith("http"):
+        edge_url = f"http://{edge_url}"
+
+    stream_url = f"{edge_url}/api/stream/annotated"
+
+    # Proxy stream từ Edge
+    async def stream_generator():
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            async with client.stream("GET", stream_url) as response:
+                async for chunk in response.aiter_bytes():
+                    yield chunk
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
 
 
 @app.websocket("/ws/history")
