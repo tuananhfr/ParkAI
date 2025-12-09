@@ -1,9 +1,13 @@
 {
   "this_central": {
-    "id": "central-1",
-    "ip": "127.0.0.1",
-    "p2p_port": 9000,
+    "id": "central-2",
+    "ip": "192.168.0.78",
     "api_port": 8000
   },
-  "peer_centrals": []
+  "peer_centrals": [
+    {
+      "id": "central-1",
+      "ip": "192.168.0.144"
+    }
+  ]
 }

@@ -49,14 +49,14 @@ class CameraRegistry:
         while self.running:
             try:
                 self._check_offline_cameras()
-                time.sleep(10)  # Check mỗi 10 giây
+                time.sleep(10)  # Check moi 10 giay
             except Exception as e:
                 print(f"Camera registry error: {e}")
 
     def _check_offline_cameras(self):
         """Mark cameras as offline if no heartbeat"""
         cameras = self.db.get_cameras()
-        # Database lưu UTC, nên dùng utcnow()
+        # Database luu UTC, nen dung utcnow()
         timeout_threshold = datetime.utcnow() - timedelta(seconds=self.heartbeat_timeout)
 
         for camera in cameras:

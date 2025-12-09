@@ -9,7 +9,9 @@
       "Bash(git log:*)",
       "Bash(grep:*)",
       "Bash(python cleanup_ai_markers.py:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(rm:*)",
+      "Bash(xargs sed:*)"
     ],
     "deny": [],
     "ask": []

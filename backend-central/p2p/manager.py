@@ -18,6 +18,7 @@ class P2PManager:
         self.config = P2PConfig(config_file)
         self.server: Optional[P2PServer] = None
         self.clients: Dict[str, P2PClient] = {}
+        self.websocket_connections: Dict[str, any] = {}  # WebSocket connections from FastAPI
         self.running = False
 
         # Callbacks
@@ -43,19 +44,21 @@ class P2PManager:
 
         # Check if standalone mode
         if self.config.is_standalone():
-            print("ℹ️ Running in standalone mode (no P2P peers configured)")
+            print("Running in standalone mode (no P2P peers configured)")
             return
 
-        # Start server
-        await self._start_server()
+        # NOTE: P2P server is now handled by FastAPI WebSocket endpoint at /ws/p2p
+        # No need to start separate P2P server on port 9000
+        print("[P2P] Using FastAPI WebSocket endpoint (/ws/p2p) instead of separate server")
 
-        # Start clients to connect to peers
+        # Start clients to connect to peers (they will connect to ws://ip:8000/ws/p2p)
         await self._start_clients()
 
         # Start heartbeat loop
         asyncio.create_task(self._heartbeat_loop())
 
         print(f"P2P Manager started (ID: {self.config.get_this_central_id()})")
+        print(f"P2P WebSocket endpoint: ws://<this-server>:8000/ws/p2p")
 
     async def stop(self):
         """Stop P2P manager"""
@@ -87,16 +90,19 @@ class P2PManager:
     async def _start_clients(self):
         """Start P2P clients to connect to peers"""
         peers = self.config.get_peer_centrals()
+        this_central_id = self.config.get_this_central_id()
 
         for peer in peers:
             peer_id = peer["id"]
             peer_ip = peer["ip"]
-            peer_port = peer["p2p_port"]
+            # Use API port (8000) for WebSocket connection, not p2p_port
+            peer_port = peer.get("api_port", 8000)
 
             client = P2PClient(
                 peer_id=peer_id,
                 peer_ip=peer_ip,
                 peer_port=peer_port,
+                this_central_id=this_central_id,
                 on_message=self._handle_message,
                 on_connected=self._on_peer_connected,
                 on_disconnected=self._on_peer_disconnected
@@ -157,7 +163,7 @@ class P2PManager:
 
     async def _on_peer_disconnected(self, peer_id: str):
         """Callback when peer disconnected"""
-        print(f"🔌 Peer {peer_id} disconnected")
+        print(f"Peer {peer_id} disconnected")
 
         if self.on_peer_disconnected:
             try:
@@ -174,12 +180,12 @@ class P2PManager:
                 if not self.running:
                     break
 
-                # Send heartbeat to all peers
-                heartbeat_msg = create_heartbeat_message(
-                    source_central=self.config.get_this_central_id()
-                )
-
-                await self.broadcast(heartbeat_msg)
+                # Send heartbeat to all WebSocket connected peers
+                if self.websocket_connections:
+                    heartbeat_msg = create_heartbeat_message(
+                        source_central=self.config.get_this_central_id()
+                    )
+                    await self.broadcast(heartbeat_msg)
 
             except Exception as e:
                 print(f"Error in heartbeat loop: {e}")
@@ -191,7 +197,14 @@ class P2PManager:
 
         self.messages_sent += 1
 
-        # Send to connected clients
+        # Send through WebSocket connections (FastAPI endpoint)
+        for peer_id in list(self.websocket_connections.keys()):
+            try:
+                await self.send_websocket_message(peer_id, message)
+            except Exception as e:
+                print(f"Error broadcasting via WebSocket to {peer_id}: {e}")
+
+        # Send to connected clients (backup/legacy)
         for client in self.clients.values():
             try:
                 if client.is_connected():
@@ -208,17 +221,36 @@ class P2PManager:
 
     async def send_to_peer(self, peer_id: str, message: P2PMessage) -> bool:
         """Send message to specific peer"""
-        client = self.clients.get(peer_id)
-        if not client:
-            print(f"Peer {peer_id} not found")
-            return False
+        # Try WebSocket connection first (incoming connections)
+        if peer_id in self.websocket_connections:
+            try:
+                return await self.send_websocket_message(peer_id, message)
+            except Exception as e:
+                print(f"Error sending via WebSocket to {peer_id}: {e}")
 
-        return await client.send(message)
+        # Fallback to client connection (outgoing connections)
+        client = self.clients.get(peer_id)
+        if client and client.is_connected():
+            return await client.send(message)
+
+        print(f"Peer {peer_id} not connected")
+        return False
 
     def get_peer_status(self) -> List[Dict]:
         """Get status of all peers"""
         peers_status = []
 
+        # Get status from WebSocket connections
+        for peer_id in self.websocket_connections.keys():
+            peers_status.append({
+                "peer_id": peer_id,
+                "peer_ip": "N/A",  # Will be filled from config
+                "peer_port": 8000,
+                "status": "connected",
+                "last_ping_time": datetime.now().isoformat()
+            })
+
+        # Get status from legacy clients (if any)
         for client in self.clients.values():
             peers_status.append(client.get_status())
 
@@ -240,8 +272,108 @@ class P2PManager:
             "peers": self.get_peer_status()
         }
 
-    def reload_config(self):
+    async def reload_config(self):
         """Reload config and restart connections"""
-        print("🔄 Reloading P2P config...")
-        # TODO: Implement config reload
-        pass
+        print("Reloading P2P config...")
+
+        # Reload config from file
+        self.config._load_config()
+
+        # If now in standalone mode, stop all clients
+        if self.config.is_standalone():
+            print("Config changed to standalone mode, stopping clients...")
+            for client in self.clients.values():
+                await client.stop()
+            self.clients.clear()
+            return
+
+        # Get new peer list
+        new_peers = self.config.get_peer_centrals()
+        new_peer_ids = set(peer["id"] for peer in new_peers)
+        current_peer_ids = set(self.clients.keys())
+
+        # Stop clients for removed peers
+        removed_peers = current_peer_ids - new_peer_ids
+        for peer_id in removed_peers:
+            print(f"Stopping connection to removed peer: {peer_id}")
+            await self.clients[peer_id].stop()
+            del self.clients[peer_id]
+
+        # Start clients for new peers
+        added_peers = new_peer_ids - current_peer_ids
+        this_central_id = self.config.get_this_central_id()
+
+        for peer in new_peers:
+            peer_id = peer["id"]
+            if peer_id in added_peers:
+                print(f"Starting connection to new peer: {peer_id}")
+                peer_ip = peer["ip"]
+                peer_port = peer.get("api_port", 8000)
+
+                client = P2PClient(
+                    peer_id=peer_id,
+                    peer_ip=peer_ip,
+                    peer_port=peer_port,
+                    this_central_id=this_central_id,
+                    on_message=self._handle_message,
+                    on_connected=self._on_peer_connected,
+                    on_disconnected=self._on_peer_disconnected
+                )
+
+                self.clients[peer_id] = client
+                await client.start()
+
+        print(f"P2P config reloaded: {len(self.clients)} clients")
+
+    # WebSocket connection management (for FastAPI /ws/p2p endpoint)
+    def register_websocket_connection(self, peer_id: str, websocket):
+        """Register a WebSocket connection from FastAPI endpoint"""
+        self.websocket_connections[peer_id] = websocket
+        print(f"[P2P Manager] Registered WebSocket connection for peer: {peer_id}")
+
+        # Trigger on_peer_connected callback
+        if self.on_peer_connected:
+            asyncio.create_task(self.on_peer_connected(peer_id))
+
+    def unregister_websocket_connection(self, peer_id: str):
+        """Unregister a WebSocket connection"""
+        if peer_id in self.websocket_connections:
+            del self.websocket_connections[peer_id]
+            print(f"[P2P Manager] Unregistered WebSocket connection for peer: {peer_id}")
+
+            # Trigger on_peer_disconnected callback
+            if self.on_peer_disconnected:
+                asyncio.create_task(self.on_peer_disconnected(peer_id))
+
+    async def handle_websocket_message(self, peer_id: str, message_data: dict):
+        """Handle incoming WebSocket message from FastAPI endpoint"""
+        try:
+            # Convert dict to P2PMessage
+            message = P2PMessage(
+                msg_type=MessageType(message_data.get("type")),
+                source_central=message_data.get("source_central"),
+                timestamp=message_data.get("timestamp"),
+                event_id=message_data.get("event_id"),
+                data=message_data.get("data")
+            )
+
+            # Process message using existing handler
+            await self._handle_message(message, peer_id)
+
+        except Exception as e:
+            print(f"[P2P Manager] Error handling WebSocket message: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def send_websocket_message(self, peer_id: str, message: P2PMessage) -> bool:
+        """Send message through WebSocket connection"""
+        if peer_id not in self.websocket_connections:
+            return False
+
+        websocket = self.websocket_connections[peer_id]
+        try:
+            await websocket.send_json(message.to_dict())
+            return True
+        except Exception as e:
+            print(f"[P2P Manager] Error sending WebSocket message to {peer_id}: {e}")
+            return False

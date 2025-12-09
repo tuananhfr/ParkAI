@@ -1,0 +1,14 @@
+# Virtualenv
+venv/
+.venv/
+
+# Bytecode
+__pycache__/
+*.pyc
+
+# Local data
+data/*.db
+
+# Logs
+*.log
+

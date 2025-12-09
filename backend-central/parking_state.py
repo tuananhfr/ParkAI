@@ -11,7 +11,7 @@ import requests
 def _load_parking_fees():
     """
     Helper function để load parking fees từ API hoặc file JSON
-    Returns: dict với keys: fee_base, fee_per_hour, fee_overnight, fee_daily_max
+    Returns: dict với keys: fee_base, fee_per_hour
     """
     import config
     
@@ -20,13 +20,13 @@ def _load_parking_fees():
     
     try:
         if parking_api_url and parking_api_url.strip():
-            # Gọi API external
+            # Goi API external
             response = requests.get(parking_api_url, timeout=5)
             if response.status_code == 200:
                 fees_data = response.json()
                 fees_dict = fees_data if isinstance(fees_data, dict) else fees_data.get("fees", {})
                 
-                # Lưu vào file JSON để dùng làm cache/fallback
+                # Luu vao file JSON de dung lam cache/fallback
                 json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
                 os.makedirs(os.path.dirname(json_path), exist_ok=True)
                 with open(json_path, 'w', encoding='utf-8') as f:
@@ -34,7 +34,7 @@ def _load_parking_fees():
                 
                 return fees_dict
         else:
-            # Đọc từ file JSON
+            # Doc tu file JSON
             json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -42,24 +42,23 @@ def _load_parking_fees():
     except Exception as e:
         print(f"Failed to load parking fees: {e}")
     
-    # Fallback về giá trị mặc định từ config
+    # Fallback ve gia tri mac dinh tu config
     return {
         "fee_base": getattr(config, "FEE_BASE", 0.5),
-        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000),
-        "fee_overnight": getattr(config, "FEE_OVERNIGHT", 0),
-        "fee_daily_max": getattr(config, "FEE_DAILY_MAX", 0)
+        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000)
     }
 
 
 class ParkingStateManager:
     """Quản lý trạng thái bãi xe từ events của Edge cameras"""
 
-    def __init__(self, database):
+    def __init__(self, database, p2p_broadcaster=None):
         self.db = database
+        self.p2p_broadcaster = p2p_broadcaster
         self._fees_cache = None
         self._fees_cache_time = None
 
-    def process_edge_event(self, event_type, camera_id, camera_name, camera_type, data):
+    def process_edge_event(self, event_type, camera_id, camera_name, camera_type, data, event_id=None):
         """
         Process event từ Edge camera
 
@@ -74,7 +73,7 @@ class ParkingStateManager:
         confidence = data.get('confidence', 0.0)
         source = data.get('source', 'manual')
 
-        # Normalize plate - Edge đã validate rồi, chỉ cần normalize
+        # Normalize plate - Edge da validate roi, chi can normalize
         plate_id, plate_view = self._normalize_plate(plate_text)
         if not plate_id:
             return {
@@ -95,13 +94,22 @@ class ParkingStateManager:
         )
 
         if event_type == "ENTRY" or event_type == "DETECTION":
-            return self._process_entry(plate_id, plate_view, camera_id, camera_name, confidence, source)
+            return self._process_entry(
+                plate_id,
+                plate_view,
+                camera_id,
+                camera_name,
+                confidence,
+                source,
+                event_id=event_id,
+                edge_id=data.get('edge_id'),
+            )
         elif event_type == "EXIT":
             return self._process_exit(plate_id, plate_view, camera_id, camera_name, confidence, source)
         else:
             return {"success": False, "error": f"Unknown event type: {event_type}"}
 
-    def _process_entry(self, plate_id, plate_view, camera_id, camera_name, confidence, source):
+    def _process_entry(self, plate_id, plate_view, camera_id, camera_name, confidence, source, event_id=None, edge_id=None):
         """Process vehicle entry"""
         # Add entry
         entry_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -113,7 +121,11 @@ class ParkingStateManager:
                 camera_id=camera_id,
                 camera_name=camera_name,
                 confidence=confidence,
-                source=source
+                source=source,
+                event_id=event_id,
+                source_central=None,
+                edge_id=edge_id,
+                sync_status="LOCAL",
             )
 
             if history_id:
@@ -124,7 +136,8 @@ class ParkingStateManager:
                     "plate_id": plate_id,
                     "plate_view": plate_view,
                     "history_id": history_id,
-                    "entry_time": entry_time
+                    "entry_time": entry_time,
+                    "event_id": event_id,
                 }
             else:
                 return {
@@ -172,7 +185,8 @@ class ParkingStateManager:
             "entry_time": entry['entry_time'],
             "exit_time": exit_time,
             "duration": duration,
-            "fee": fee
+            "fee": fee,
+            "event_id": entry.get('event_id'),
         }
 
     def _normalize_plate(self, text):
@@ -186,13 +200,13 @@ class ParkingStateManager:
         if not text:
             return None, None
 
-        # Clean text - BỎ TẤT CẢ KÝ TỰ ĐẶC BIỆT (giữ số + chữ)
+        # Clean text - BO TAT CA KY TU DAC BIET (giu so + chu)
         clean_text = re.sub(r'[^A-Z0-9]', '', text.upper())
         
-        if len(clean_text) < 6:  # Tối thiểu 6 ký tự
+        if len(clean_text) < 6:  # Toi thieu 6 ky tu
             return None, None
 
-        # Display text - GIỮ NGUYÊN text từ edge (không tự format)
+        # Display text - GIU NGUYEN text tu edge (khong tu format)
         plate_view = text.upper().strip()
 
         return clean_text, plate_view
@@ -213,7 +227,7 @@ class ParkingStateManager:
         minutes = int((duration_hours - hours) * 60)
         duration_str = f"{hours} giờ {minutes} phút"
 
-        # Load parking fees từ API/file JSON (cache 60 giây)
+        # Load parking fees tu API/file JSON (cache 60 giay)
         now = datetime.now()
         if self._fees_cache is None or \
            (self._fees_cache_time and (now - self._fees_cache_time).total_seconds() > 60):
@@ -223,18 +237,13 @@ class ParkingStateManager:
         fees = self._fees_cache
         free_hours = fees.get("fee_base", 0.5) or 0
         hourly_fee = fees.get("fee_per_hour", 25000) or 0
-        fee_daily_max = fees.get("fee_daily_max", 0) or 0
 
         if duration_hours <= free_hours:
             fee = 0
         else:
             billable_hours = duration_hours - free_hours
-            # Làm tròn lên để tính theo từng giờ
+            # Lam tron len de tinh theo tung gio
             fee = math.ceil(billable_hours) * hourly_fee
-            
-            # Áp dụng giới hạn phí tối đa 1 ngày nếu có
-            if fee_daily_max > 0:
-                fee = min(fee, fee_daily_max)
 
         return duration_str, fee
 

@@ -14,16 +14,16 @@ class Database:
         self.db_file = db_file
         self.lock = Lock()
 
-        # Tạo thư mục nếu chưa có
+        # Tao thu muc neu chua co
         os.makedirs(os.path.dirname(db_file), exist_ok=True)
 
-        # Khởi tạo database
+        # Khoi tao database
         self._init_db()
 
     def _get_connection(self):
         """Tạo connection mới (để tránh lỗi thread)"""
         conn = sqlite3.connect(self.db_file)
-        conn.row_factory = sqlite3.Row  # Để query trả về dict
+        conn.row_factory = sqlite3.Row  # De query tra ve dict
         return conn
 
     def _init_db(self):
@@ -65,7 +65,7 @@ class Database:
                 )
             """)
 
-            # Table: history_changes (lưu lịch sử thay đổi biển số) - giống central nhưng tham chiếu entries
+            # Table: history_changes (luu lich su thay doi bien so) - giong central nhung tham chieu entries
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS history_changes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -338,7 +338,7 @@ class Database:
             conn.commit()
             conn.close()
 
-            print(f"🗑️  Deleted {deleted} old entries")
+            print(f" Deleted {deleted} old entries")
             return deleted
 
     def update_history_entry(self, history_id, new_plate_id, new_plate_view):
@@ -349,7 +349,7 @@ class Database:
             cursor = conn.cursor()
 
             try:
-                # Lấy record cũ
+                # Lay record cu
                 cursor.execute("SELECT * FROM entries WHERE id = ?", (history_id,))
                 old_record = cursor.fetchone()
                 if not old_record:
@@ -364,12 +364,12 @@ class Database:
                     WHERE id = ?
                 """, (new_plate_id, new_plate_view, history_id))
 
-                # Lấy record mới
+                # Lay record moi
                 cursor.execute("SELECT * FROM entries WHERE id = ?", (history_id,))
                 new_record = cursor.fetchone()
                 new_data = dict(new_record)
 
-                # Lưu lịch sử thay đổi
+                # Luu lich su thay doi
                 cursor.execute("""
                     INSERT INTO history_changes (
                         history_id, change_type, old_plate_id, old_plate_view,
@@ -402,7 +402,7 @@ class Database:
             cursor = conn.cursor()
 
             try:
-                # Lấy record cũ
+                # Lay record cu
                 cursor.execute("SELECT * FROM entries WHERE id = ?", (history_id,))
                 old_record = cursor.fetchone()
                 if not old_record:
@@ -410,7 +410,7 @@ class Database:
 
                 old_data = dict(old_record)
 
-                # Lưu lịch sử thay đổi trước khi xóa
+                # Luu lich su thay doi truoc khi xoa
                 cursor.execute("""
                     INSERT INTO history_changes (
                         history_id, change_type, old_plate_id, old_plate_view,
@@ -423,7 +423,7 @@ class Database:
                     json.dumps(old_data)
                 ))
 
-                # Xóa record trong entries
+                # Xoa record trong entries
                 cursor.execute("DELETE FROM entries WHERE id = ?", (history_id,))
 
                 conn.commit()

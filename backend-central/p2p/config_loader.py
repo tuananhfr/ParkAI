@@ -17,7 +17,7 @@ class P2PConfig:
 
     def _load_config(self):
         """Load config from file"""
-        # Tạo config mặc định nếu file không tồn tại
+        # Tao config mac dinh neu file khong ton tai
         if not os.path.exists(self.config_file):
             self._create_default_config()
 
@@ -41,7 +41,6 @@ class P2PConfig:
             "this_central": {
                 "id": "central-1",
                 "ip": "127.0.0.1",
-                "p2p_port": 9000,
                 "api_port": 8000
             },
             "peer_centrals": []
@@ -67,9 +66,6 @@ class P2PConfig:
         if not self.this_central.get("ip"):
             raise ValueError("Missing 'ip' in this_central")
 
-        if not self.this_central.get("p2p_port"):
-            raise ValueError("Missing 'p2p_port' in this_central")
-
         # Validate peer_centrals
         for peer in self.peer_centrals:
             if not peer.get("id"):
@@ -78,9 +74,6 @@ class P2PConfig:
             if not peer.get("ip"):
                 raise ValueError("Missing 'ip' in peer_centrals")
 
-            if not peer.get("p2p_port"):
-                raise ValueError("Missing 'p2p_port' in peer_centrals")
-
     def get_this_central_id(self) -> str:
         """Get this central ID"""
         return self.this_central.get("id", "central-1")
@@ -88,10 +81,6 @@ class P2PConfig:
     def get_this_central_ip(self) -> str:
         """Get this central IP"""
         return self.this_central.get("ip", "127.0.0.1")
-
-    def get_this_central_p2p_port(self) -> int:
-        """Get this central P2P port"""
-        return self.this_central.get("p2p_port", 9000)
 
     def get_peer_centrals(self) -> List[Dict]:
         """Get list of peer centrals"""
@@ -115,13 +104,12 @@ class P2PConfig:
             print(f"Error saving P2P config: {e}")
             return False
 
-    def update_this_central(self, central_id: str, ip: str, p2p_port: int, api_port: int):
+    def update_this_central(self, central_id: str, ip: str, api_port: int):
         """Update this central config"""
         config = {
             "this_central": {
                 "id": central_id,
                 "ip": ip,
-                "p2p_port": p2p_port,
                 "api_port": api_port
             },
             "peer_centrals": self.peer_centrals

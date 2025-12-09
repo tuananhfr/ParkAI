@@ -12,7 +12,7 @@ from database import Database
 def _load_parking_fees():
     """
     Helper function để load parking fees từ API hoặc file JSON
-    Returns: dict với keys: fee_base, fee_per_hour, fee_overnight, fee_daily_max
+    Returns: dict với keys: fee_base, fee_per_hour
     """
     import config
     
@@ -21,13 +21,13 @@ def _load_parking_fees():
     
     try:
         if parking_api_url and parking_api_url.strip():
-            # Gọi API external
+            # Goi API external
             response = requests.get(parking_api_url, timeout=5)
             if response.status_code == 200:
                 fees_data = response.json()
                 fees_dict = fees_data if isinstance(fees_data, dict) else fees_data.get("fees", {})
                 
-                # Lưu vào file JSON để dùng làm cache/fallback
+                # Luu vao file JSON de dung lam cache/fallback
                 json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
                 os.makedirs(os.path.dirname(json_path), exist_ok=True)
                 with open(json_path, 'w', encoding='utf-8') as f:
@@ -35,7 +35,7 @@ def _load_parking_fees():
                 
                 return fees_dict
         else:
-            # Đọc từ file JSON
+            # Doc tu file JSON
             json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -43,12 +43,10 @@ def _load_parking_fees():
     except Exception as e:
         print(f"Failed to load parking fees: {e}")
     
-    # Fallback về giá trị mặc định từ config
+    # Fallback ve gia tri mac dinh tu config
     return {
         "fee_base": getattr(config, "FEE_BASE", 0.5),
-        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000),
-        "fee_overnight": getattr(config, "FEE_OVERNIGHT", 0),
-        "fee_daily_max": getattr(config, "FEE_DAILY_MAX", 0)
+        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000)
     }
 
 
@@ -73,18 +71,18 @@ class ParkingManager:
         }
         """
         try:
-            # Cache subscriptions trong 60 giây để tránh đọc file liên tục
+            # Cache subscriptions trong 60 giay de tranh doc file lien tuc
             now = datetime.now()
             if self._subscription_cache is None or \
                (self._subscription_cache_time and (now - self._subscription_cache_time).total_seconds() > 60):
-                # Ưu tiên: Fetch subscriptions từ local edge API
+                # Uu tien: Fetch subscriptions tu local edge API
                 import config
                 subscription_api_url = getattr(config, "SUBSCRIPTION_API_URL", "")
                 subscription_json_file = getattr(config, "SUBSCRIPTION_JSON_FILE", "data/subscriptions.json")
 
                 try:
                     if subscription_api_url and subscription_api_url.strip():
-                        # Gọi API external
+                        # Goi API external
                         import requests
                         response = requests.get(subscription_api_url, timeout=2)
                         if response.status_code == 200:
@@ -98,14 +96,14 @@ class ParkingManager:
                         else:
                             raise Exception(f"API returned status {response.status_code}")
                     else:
-                        # Đọc từ file JSON local
+                        # Doc tu file JSON local
                         json_path = os.path.join(os.path.dirname(__file__), subscription_json_file)
                         if os.path.exists(json_path):
                             with open(json_path, 'r', encoding='utf-8') as f:
                                 self._subscription_cache = json.load(f)
                                 self._subscription_cache_time = now
                         else:
-                            # Fallback: Thử fetch từ Central nếu có
+                            # Fallback: Thu fetch tu Central neu co
                             central_url = getattr(config, "CENTRAL_SERVER_URL", "")
                             if central_url:
                                 import requests
@@ -122,7 +120,7 @@ class ParkingManager:
                                     self._subscription_cache = []
                                     self._subscription_cache_time = now
                             else:
-                                # Không có central_url, set cache rỗng
+                                # Khong co central_url, set cache rong
                                 self._subscription_cache = []
                                 self._subscription_cache_time = now
                 except Exception as e:
@@ -138,7 +136,7 @@ class ParkingManager:
                     "owner_name": None
                 }
 
-            # Normalize plate_id để so sánh (bỏ dấu gạch ngang, uppercase)
+            # Normalize plate_id de so sanh (bo dau gach ngang, uppercase)
             normalized_plate = re.sub(r'[^A-Z0-9]', '', plate_id.upper())
 
             for sub in self._subscription_cache:
@@ -147,7 +145,7 @@ class ParkingManager:
 
                 # Check match
                 if sub_plate == normalized_plate:
-                    # Check status và expiration
+                    # Check status va expiration
                     if sub.get('status') != 'active':
                         return {
                             "is_subscriber": False,
@@ -156,7 +154,7 @@ class ParkingManager:
                             "note": f"Thuê bao hết hạn hoặc inactive"
                         }
 
-                    # Check expiration date (nếu có)
+                    # Check expiration date (neu co)
                     end_date = sub.get('end_date')
                     if end_date:
                         try:
@@ -202,10 +200,10 @@ class ParkingManager:
         if not text:
             return None, None
 
-        # Bỏ ký tự đặc biệt, CHỈ GIỮ SỐ + CHỮ
+        # Bo ky tu dac biet, CHI GIU SO + CHU
         clean_text = re.sub(r'[^A-Z0-9]', '', text.upper())
 
-        # Patterns biển số VN: 2-3 số + 1-2 chữ + 4-6 số
+        # Patterns bien so VN: 2-3 so + 1-2 chu + 4-6 so
         patterns = [
             r"^[0-9]{2}[A-Z]{1,2}[0-9]{4,6}$",   # 29A12345, 29AB12345, 29A1234, 29A112345
             r"^[0-9]{3}[A-Z]{1,2}[0-9]{4,6}$",   # 123A12345 (công vụ)
@@ -221,7 +219,7 @@ class ParkingManager:
         if not matched:
             return None, None
 
-        # Display text - GIỮ NGUYÊN text từ OCR (KHÔNG TỰ FORMAT)
+        # Display text - GIU NGUYEN text tu OCR (KHONG TU FORMAT)
         display_text = text.upper()
 
         return clean_text, display_text
@@ -273,7 +271,7 @@ class ParkingManager:
                 "existing_entry": existing
             }
 
-        # Thêm vào DB
+        # Them vao DB
         entry_id = self.db.add_entry(
             plate_id=plate_id,
             plate_view=display_text,
@@ -297,7 +295,7 @@ class ParkingManager:
                      confidence, source):
         """Xử lý xe RA"""
 
-        # Tìm entry IN
+        # Tim entry IN
         entry = self.db.find_entry_in(plate_id)
 
         if not entry:
@@ -306,23 +304,23 @@ class ParkingManager:
                 "error": f"Xe {display_text} không có record VÀO!"
             }
 
-        # Tính duration
+        # Tinh duration
         duration = self.calculate_duration(entry['entry_time'], datetime.now())
 
-        # CHECK SUBSCRIPTION - NẾU LÀ THUÊ BAO THÌ FEE = 0 
+        # CHECK SUBSCRIPTION - NEU LA THUE BAO THI FEE = 0
         subscription_info = self.check_subscription(plate_id)
         is_subscriber = subscription_info.get('is_subscriber', False)
 
         if is_subscriber:
-            # Thuê bao → Miễn phí
+            # Thue bao → Mien phi
             fee = 0
             customer_type = subscription_info.get('type', 'subscription')  # company, monthly
             print(f"Xe {display_text} là THUÊ BAO ({customer_type}) - Miễn phí")
         else:
-            # Khách lẻ → Tính phí bình thường
+            # Khach le → Tinh phi binh thuong
             fee = self.calculate_fee(entry['entry_time'], datetime.now())
             customer_type = "regular"
-            print(f"💰 Xe {display_text} là KHÁCH LẺ - Phí: {fee:,}đ")
+            print(f"Xe {display_text} là KHÁCH LẺ - Phí: {fee:,}đ")
 
         # Update DB
         self.db.update_exit(
@@ -387,7 +385,7 @@ class ParkingManager:
             delta = exit_time - entry_time
             duration_hours = delta.total_seconds() / 3600
 
-            # Load parking fees từ API/file JSON (cache 60 giây)
+            # Load parking fees tu API/file JSON (cache 60 giay)
             now = datetime.now()
             if self._fees_cache is None or \
                (self._fees_cache_time and (now - self._fees_cache_time).total_seconds() > 60):
@@ -397,19 +395,14 @@ class ParkingManager:
             fees = self._fees_cache
             free_hours = fees.get("fee_base", 0.5) or 0
             hourly_fee = fees.get("fee_per_hour", 25000) or 0
-            fee_daily_max = fees.get("fee_daily_max", 0) or 0
 
             if duration_hours <= free_hours:
                 fee = 0
             else:
                 billable_hours = duration_hours - free_hours
-                # Làm tròn lên để tính theo từng giờ
+                # Lam tron len de tinh theo tung gio
                 import math
                 fee = math.ceil(billable_hours) * hourly_fee
-                
-                # Áp dụng giới hạn phí tối đa 1 ngày nếu có
-                if fee_daily_max > 0:
-                    fee = min(fee, fee_daily_max)
 
             return fee
         except Exception as e:

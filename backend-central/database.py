@@ -26,10 +26,13 @@ class CentralDatabase:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            # Table: history (lưu TOÀN BỘ lịch sử vào/ra - KHÔNG CÓ UNIQUE CONSTRAINT)
+            # Table: history (luu TOAN BO lich su vao/ra - KHONG CO UNIQUE CONSTRAINT)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT,
+                    source_central TEXT,
+                    edge_id TEXT,
                     plate_id TEXT NOT NULL,
                     plate_view TEXT NOT NULL,
 
@@ -48,6 +51,7 @@ class CentralDatabase:
                     duration TEXT,
                     fee INTEGER DEFAULT 0,
                     status TEXT NOT NULL,
+                    sync_status TEXT DEFAULT 'LOCAL',
 
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -70,7 +74,10 @@ class CentralDatabase:
                 ON history(created_at)
             """)
 
-            # Table: events (log tất cả events từ Edge)
+            # Ensure backward-compatible columns for existing DBs
+            self._ensure_history_columns(conn, cursor)
+
+            # Table: events (log tat ca events tu Edge)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,7 +93,7 @@ class CentralDatabase:
                 )
             """)
 
-            # Table: cameras (registry của tất cả cameras)
+            # Table: cameras (registry cua tat ca cameras)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS cameras (
                     id INTEGER PRIMARY KEY,
@@ -101,7 +108,7 @@ class CentralDatabase:
                 )
             """)
 
-            # Table: history_changes (lưu lịch sử thay đổi biển số)
+            # Table: history_changes (luu lich su thay doi bien so)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS history_changes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,7 +138,37 @@ class CentralDatabase:
             conn.commit()
             conn.close()
 
-    def add_vehicle_entry(self, plate_id, plate_view, entry_time, camera_id, camera_name, confidence, source):
+    def _ensure_history_columns(self, conn, cursor):
+        """
+        Add missing columns to history for backward compatibility.
+        Columns required by P2P/sync flows: event_id, source_central, edge_id, sync_status.
+        """
+        cursor.execute("PRAGMA table_info(history)")
+        existing_cols = {row[1] for row in cursor.fetchall()}
+
+        def add_col(name, ddl):
+            if name not in existing_cols:
+                cursor.execute(f"ALTER TABLE history ADD COLUMN {ddl}")
+
+        add_col("event_id", "TEXT")
+        add_col("source_central", "TEXT")
+        add_col("edge_id", "TEXT")
+        add_col("sync_status", "TEXT DEFAULT 'LOCAL'")
+
+    def add_vehicle_entry(
+        self,
+        plate_id,
+        plate_view,
+        entry_time,
+        camera_id,
+        camera_name,
+        confidence,
+        source,
+        event_id=None,
+        source_central=None,
+        edge_id=None,
+        sync_status="LOCAL",
+    ):
         """
         Add vehicle entry - Giờ CHỈ lưu vào bảng history.
 
@@ -145,11 +182,24 @@ class CentralDatabase:
                 cursor.execute(
                     """
                     INSERT INTO history (
+                        event_id, source_central, edge_id,
                         plate_id, plate_view, entry_time, entry_camera_id, entry_camera_name,
-                        entry_confidence, entry_source, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'IN')
+                        entry_confidence, entry_source, status, sync_status
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'IN', ?)
                     """,
-                    (plate_id, plate_view, entry_time, camera_id, camera_name, confidence, source),
+                    (
+                        event_id,
+                        source_central,
+                        edge_id,
+                        plate_id,
+                        plate_view,
+                        entry_time,
+                        camera_id,
+                        camera_name,
+                        confidence,
+                        source,
+                        sync_status,
+                    ),
                 )
 
                 history_id = cursor.lastrowid
@@ -316,7 +366,7 @@ class CentralDatabase:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
 
-            # Query từ HISTORY table (không phải vehicles)
+            # Query tu HISTORY table (khong phai vehicles)
             query = "SELECT * FROM history WHERE 1=1"
             params = []
 
@@ -324,14 +374,14 @@ class CentralDatabase:
                 query += " AND DATE(created_at) = DATE('now')"
 
             if in_parking_only:
-                # Filter "Trong bãi" - Chỉ lấy xe ĐANG TRONG BÃI (status='IN' và exit_time IS NULL)
+                # Filter "Trong bai" - Chi lay xe DANG TRONG BAI (status='IN' va exit_time IS NULL)
                 query += " AND status = 'IN' AND exit_time IS NULL"
             elif entries_only:
-                # Filter "VÀO" - Lấy TẤT CẢ các lần vào (bao gồm cả đã ra)
-                # Mọi record trong history đều là một lần vào, không cần filter thêm
+                # Filter "VAO" - Lay TAT CA cac lan vao (bao gom ca da ra)
+                # Moi record trong history deu la mot lan vao, khong can filter them
                 pass
             elif status:
-                # Filter "RA" - Lấy các lần ra (status='OUT')
+                # Filter "RA" - Lay cac lan ra (status='OUT')
                 query += " AND status = ?"
                 params.append(status)
 
@@ -367,7 +417,7 @@ class CentralDatabase:
             conn = sqlite3.connect(self.db_file)
             cursor = conn.cursor()
 
-            # Vehicles in parking: các bản ghi status='IN' chưa có exit_time
+            # Vehicles in parking: cac ban ghi status='IN' chua co exit_time
             cursor.execute(
                 """
                 SELECT COUNT(*) FROM history
@@ -376,7 +426,7 @@ class CentralDatabase:
             )
             vehicles_in = cursor.fetchone()[0]
 
-            # Total entries today (đếm từ history - số lần vào hôm nay)
+            # Total entries today (dem tu history - so lan vao hom nay)
             cursor.execute(
                 """
                 SELECT COUNT(*) FROM history 
@@ -385,7 +435,7 @@ class CentralDatabase:
             )
             entries_today = cursor.fetchone()[0]
 
-            # Total exits today (đếm từ history - số lần ra hôm nay)
+            # Total exits today (dem tu history - so lan ra hom nay)
             cursor.execute(
                 """
                 SELECT COUNT(*) FROM history 
@@ -394,7 +444,7 @@ class CentralDatabase:
             )
             exits_today = cursor.fetchone()[0]
 
-            # Total revenue today (tính từ history - tổng phí các lần ra hôm nay)
+            # Total revenue today (tinh tu history - tong phi cac lan ra hom nay)
             cursor.execute(
                 """
                 SELECT SUM(fee) FROM history 
@@ -421,7 +471,7 @@ class CentralDatabase:
             cursor = conn.cursor()
 
             try:
-                # Lấy record cũ
+                # Lay record cu
                 cursor.execute("SELECT * FROM history WHERE id = ?", (history_id,))
                 old_record = cursor.fetchone()
                 if not old_record:
@@ -436,12 +486,12 @@ class CentralDatabase:
                     WHERE id = ?
                 """, (new_plate_id, new_plate_view, history_id))
 
-                # Lấy record mới
+                # Lay record moi
                 cursor.execute("SELECT * FROM history WHERE id = ?", (history_id,))
                 new_record = cursor.fetchone()
                 new_data = dict(new_record)
 
-                # Lưu lịch sử thay đổi
+                # Luu lich su thay doi
                 cursor.execute("""
                     INSERT INTO history_changes (
                         history_id, change_type, old_plate_id, old_plate_view,
@@ -474,7 +524,7 @@ class CentralDatabase:
             cursor = conn.cursor()
 
             try:
-                # Lấy record cũ
+                # Lay record cu
                 conn.row_factory = sqlite3.Row
                 cursor = conn.cursor()
                 cursor.execute("SELECT * FROM history WHERE id = ?", (history_id,))
@@ -484,7 +534,7 @@ class CentralDatabase:
 
                 old_data = dict(old_record)
 
-                # Lưu lịch sử thay đổi trước khi xóa
+                # Luu lich su thay doi truoc khi xoa
                 cursor.execute("""
                     INSERT INTO history_changes (
                         history_id, change_type, old_plate_id, old_plate_view,
@@ -497,7 +547,7 @@ class CentralDatabase:
                     json.dumps(old_data)
                 ))
 
-                # Xóa record trong history
+                # Xoa record trong history
                 cursor.execute("DELETE FROM history WHERE id = ?", (history_id,))
 
                 conn.commit()

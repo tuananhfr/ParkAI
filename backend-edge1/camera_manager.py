@@ -30,13 +30,13 @@ class CameraManager:
             with open(labels_path, 'r') as f:
                 self.intrinsics.labels = f.read().splitlines()
         
-        # Set intrinsics - MATCH với demo code args
+        # Set intrinsics - MATCH voi demo code args
         self.intrinsics.bbox_normalization = True
         self.intrinsics.ignore_dash_labels = True
         self.intrinsics.bbox_order = "xy"
-        # Set postprocess nếu model cần (check model type)
-        # Nếu model KHÔNG có built-in postprocessing thì set "nanodet"
-        # Nếu có built-in thì để None hoặc ""
+        # Set postprocess neu model can (check model type)
+        # Neu model KHONG co built-in postprocessing thi set "nanodet"
+        # Neu co built-in thi de None hoac ""
         if not hasattr(self.intrinsics, 'postprocess') or self.intrinsics.postprocess is None:
             self.intrinsics.postprocess = ""  # Model có built-in postprocessing
         self.intrinsics.update_with_defaults()
@@ -65,10 +65,10 @@ class CameraManager:
         # Frame queue cho detection service
         self.frame_queue = Queue(maxsize=config.MAX_FRAME_QUEUE_SIZE)
 
-        # Raw frame queue cho WebRTC (không có detections)
+        # Raw frame queue cho WebRTC (khong co detections)
         self.raw_frame_queue = Queue(maxsize=config.MAX_FRAME_QUEUE_SIZE)
 
-        # Annotated frame queue cho WebRTC (CÓ boxes vẽ sẵn từ backend)
+        # Annotated frame queue cho WebRTC (CO boxes ve san tu backend)
         self.annotated_frame_queue = Queue(maxsize=config.MAX_FRAME_QUEUE_SIZE)
 
         # Control
@@ -107,20 +107,20 @@ class CameraManager:
             try:
                 frame_count += 1
 
-                # === OPTIMIZATION 1: Capture metadata + frame cùng lúc ===
-                # IMX500 đã run inference, metadata có sẵn bbox
+                # === OPTIMIZATION 1: Capture metadata + frame cung luc ===
+                # IMX500 da run inference, metadata co san bbox
                 request = self.picam2.capture_request()
 
                 try:
-                    # Lấy frame từ request (zero-copy nếu possible)
+                    # Lay frame tu request (zero-copy neu possible)
                     frame = request.make_array("main")
                     metadata = request.get_metadata()
 
                     if frame is None:
                         continue
 
-                    # === OPTIMIZATION 2: Raw frame cho WebRTC (NO COPY nếu được) ===
-                    # Chỉ copy khi queue đầy cần drop
+                    # === OPTIMIZATION 2: Raw frame cho WebRTC (NO COPY neu duoc) ===
+                    # Chi copy khi queue day can drop
                     if not self.raw_frame_queue.full():
                         self.raw_frame_queue.put_nowait(frame)  # No copy!
                     else:
@@ -132,8 +132,8 @@ class CameraManager:
                             pass
 
                     # === OPTIMIZATION 3: Detection + OCR ===
-                    # CHỈ gửi frames CÓ IMX500 outputs (để tránh 50% frames = None)
-                    # Pre-extract outputs để cache (tránh gọi get_outputs 2 lần)
+                    # CHI gui frames CO IMX500 outputs (de tranh 50% frames = None)
+                    # Pre-extract outputs de cache (tranh goi get_outputs 2 lan)
                     outputs = None
                     try:
                         outputs = self.imx500.get_outputs(metadata, add_batch=True)
@@ -142,8 +142,8 @@ class CameraManager:
 
                     has_outputs = outputs is not None and len(outputs) >= 3
 
-                    # GỬI TẤT CẢ frames có outputs (bỏ frame_skip để tránh miss detections)
-                    # IMX500 tự throttle ~15 FPS inference, nên tự nhiên sẽ có ~15 FPS outputs
+                    # GUI TAT CA frames co outputs (bo frame_skip de tranh miss detections)
+                    # IMX500 tu throttle ~15 FPS inference, nen tu nhien se co ~15 FPS outputs
                     if has_outputs:
                         frame_for_ocr = frame.copy() if config.ENABLE_OCR else None
 
@@ -165,7 +165,7 @@ class CameraManager:
                             except:
                                 pass
 
-                        # VẼ BOXES LÊN FRAME cho annotated video (DEBUG)
+                        # VE BOXES LEN FRAME cho annotated video (DEBUG)
                         annotated_frame = self._draw_boxes(frame.copy(), outputs, metadata)
 
                         if not self.annotated_frame_queue.full():
@@ -179,7 +179,7 @@ class CameraManager:
                                 pass
 
                 finally:
-                    # Release request để free memory
+                    # Release request de free memory
                     request.release()
 
             except Exception as e:
@@ -227,17 +227,17 @@ class CameraManager:
             if outputs is None or len(outputs) < 3:
                 return frame
 
-            # Parse giống detection_service - THEO DEMO CODE
+            # Parse giong detection_service - THEO DEMO CODE
             boxes = outputs[0][0]      # Shape: (300, 4)
             scores = outputs[1][0]     # Shape: (300,)
             classes = outputs[2][0]    # Shape: (300,)
 
-            # Normalize ĐÚNG như demo code
+            # Normalize DUNG nhu demo code
             if self.intrinsics.bbox_normalization:
                 input_w, input_h = self.imx500.get_input_size()
                 boxes = boxes / input_h
 
-            # Swap bbox order ĐÚNG như demo code
+            # Swap bbox order DUNG nhu demo code
             if self.intrinsics.bbox_order == "xy":
                 boxes = boxes[:, [1, 0, 3, 2]]
 
@@ -246,23 +246,23 @@ class CameraManager:
             boxes = [arr.flatten() for arr in boxes]
             boxes = zip(*boxes)
 
-            # Vẽ boxes lên frame - DÙNG Detection class để convert
+            # Ve boxes len frame - DUNG Detection class de convert
             for box, score, category in zip(boxes, scores, classes):
                 if score > config.DETECTION_THRESHOLD:
-                    # Dùng Detection class như demo code
+                    # Dung Detection class nhu demo code
                     from detection_service import Detection
                     detection = Detection(box, category, score, metadata, self.imx500, self.picam2)
                     x, y, w, h = detection.box
 
-                    # FILTER: Chỉ vẽ boxes NẰM NGANG
+                    # FILTER: Chi ve boxes NAM NGANG
                     aspect_ratio = w / h if h > 0 else 0
                     if aspect_ratio <= config.MIN_PLATE_ASPECT_RATIO:
-                        continue  # Skip boxes nằm dọc
+                        continue  # Skip boxes nam doc
 
-                    # Vẽ rectangle (màu xanh = ACCEPTED)
+                    # Ve rectangle (mau xanh = ACCEPTED)
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-                    # Vẽ text (confidence + aspect ratio)
+                    # Ve text (confidence + aspect ratio)
                     label = f"{score:.2f} | {aspect_ratio:.1f}:1"
                     cv2.putText(frame, label, (x, y - 10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)

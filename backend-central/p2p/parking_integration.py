@@ -43,7 +43,7 @@ class P2PParkingBroadcaster:
         Call này NGAY SAU KHI insert vào local DB
         """
         if not self.p2p_manager or self.p2p_manager.config.is_standalone():
-            # Standalone mode - không broadcast
+            # Standalone mode - khong broadcast
             return
 
         try:
@@ -59,7 +59,7 @@ class P2PParkingBroadcaster:
             )
 
             await self.p2p_manager.broadcast(message)
-            print(f"📡 Broadcasted ENTRY_PENDING: {plate_view} ({event_id})")
+            print(f"Broadcasted ENTRY_PENDING: {plate_view} ({event_id})")
 
         except Exception as e:
             print(f"Error broadcasting entry pending: {e}")
@@ -71,8 +71,6 @@ class P2PParkingBroadcaster:
     ):
         """
         Broadcast VEHICLE_ENTRY_CONFIRMED event
-
-        Call này khi barrier đã đóng
         """
         if not self.p2p_manager or self.p2p_manager.config.is_standalone():
             return
@@ -85,7 +83,7 @@ class P2PParkingBroadcaster:
             )
 
             await self.p2p_manager.broadcast(message)
-            print(f"📡 Broadcasted ENTRY_CONFIRMED: {event_id}")
+            print(f"Broadcasted ENTRY_CONFIRMED: {event_id}")
 
         except Exception as e:
             print(f"Error broadcasting entry confirmed: {e}")
@@ -118,7 +116,7 @@ class P2PParkingBroadcaster:
             )
 
             await self.p2p_manager.broadcast(message)
-            print(f"📡 Broadcasted EXIT: {event_id}, fee {fee}")
+            print(f"Broadcasted EXIT: {event_id}, fee {fee}")
 
         except Exception as e:
             print(f"Error broadcasting exit: {e}")

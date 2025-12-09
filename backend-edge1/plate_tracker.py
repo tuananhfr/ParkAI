@@ -45,7 +45,7 @@ class PlateTracker:
         """
         bbox_key = self._get_bbox_key(bbox)
 
-        # Create tracker cho box này nếu chưa có
+        # Create tracker cho box nay neu chua co
         if bbox_key not in self.trackers:
             self.trackers[bbox_key] = PlateVotes(
                 window_seconds=self.window_seconds,
@@ -101,7 +101,7 @@ class PlateVotes:
         Returns:
             None nếu chưa đủ votes, hoặc final_plate nếu đã consensus
         """
-        # Nếu đã finalized, return kết quả
+        # Neu da finalized, return ket qua
         if self.finalized:
             return self.final_result
 
@@ -109,11 +109,11 @@ class PlateVotes:
         current_time = time.time()
         self.votes.append((plate_text, current_time))
 
-        # Remove votes ngoài window
+        # Remove votes ngoai window
         cutoff_time = current_time - self.window_seconds
         self.votes = [(text, ts) for text, ts in self.votes if ts >= cutoff_time]
 
-        # EARLY STOP: Check ngay nếu có đủ votes giống nhau
+        # EARLY STOP: Check ngay neu co du votes giong nhau
         early_stop_enabled = getattr(config, 'EARLY_STOP_ENABLED', True)
 
         if early_stop_enabled:
@@ -124,7 +124,7 @@ class PlateVotes:
                 print(f"⚡ EARLY STOP: {result} ({len(self.votes)} votes in {current_time - self.first_seen:.2f}s)")
                 return result
 
-        # Fallback: Check nếu đủ votes (old logic)
+        # Fallback: Check neu du votes (old logic)
         if len(self.votes) >= self.min_votes:
             result = self._get_consensus()
             if result:
@@ -146,12 +146,12 @@ class PlateVotes:
         if len(self.votes) < self.min_votes:
             return None
 
-        # Count votes sau khi normalize (bỏ ký tự đặc biệt)
+        # Count votes sau khi normalize (bo ky tu dac biet)
         normalized_votes = []
         vote_mapping = {}  # {normalized: [original, ...]}
 
         for plate_text, _ in self.votes:
-            # Normalize: CHỈ GIỮ SỐ + CHỮ
+            # Normalize: CHI GIU SO + CHU
             normalized = ''.join(c.upper() for c in plate_text if c.isalnum())
             normalized_votes.append(normalized)
 
@@ -159,13 +159,13 @@ class PlateVotes:
                 vote_mapping[normalized] = []
             vote_mapping[normalized].append(plate_text)
 
-        # Đếm votes
+        # Dem votes
         vote_counts = Counter(normalized_votes)
         most_common_normalized, count = vote_counts.most_common(1)[0]
 
-        # Nếu đủ min_votes → STOP NGAY!
+        # Neu du min_votes → STOP NGAY!
         if count >= self.min_votes:
-            # Chọn bản đẹp nhất từ các original votes
+            # Chon ban dep nhat tu cac original votes
             original_votes = vote_mapping[most_common_normalized]
             return self._select_best_format(original_votes)
 
@@ -184,12 +184,12 @@ class PlateVotes:
         # Group similar plates
         groups = self._group_similar_plates()
 
-        # Find group với votes nhiều nhất
+        # Find group voi votes nhieu nhat
         best_group = max(groups, key=lambda g: len(g['votes']))
 
-        # Check nếu đạt min_votes
+        # Check neu dat min_votes
         if len(best_group['votes']) >= self.min_votes:
-            # Chọn plate CÓ FORMAT ĐẸP NHẤT trong group
+            # Chon plate CO FORMAT DEP NHAT trong group
             return self._select_best_format(best_group['votes'])
 
         return None
@@ -204,7 +204,7 @@ class PlateVotes:
         groups = []
 
         for plate_text, _ in self.votes:
-            # Tìm group phù hợp
+            # Tim group phu hop
             added = False
             for group in groups:
                 if self._is_similar(plate_text, group['representative']):
@@ -212,7 +212,7 @@ class PlateVotes:
                     added = True
                     break
 
-            # Tạo group mới nếu không match
+            # Tao group moi neu khong match
             if not added:
                 groups.append({
                     'representative': plate_text,
@@ -235,21 +235,21 @@ class PlateVotes:
         """
         from collections import Counter
 
-        # Đếm votes
+        # Dem votes
         vote_counts = Counter(votes)
         most_common_plate = vote_counts.most_common(1)[0][0]
 
-        # Nếu đã có dấu - hoặc . → trả về luôn
+        # Neu da co dau - hoac . → tra ve luon
         if '-' in most_common_plate or '.' in most_common_plate:
             return most_common_plate
 
-        # Nếu chưa có dấu → TÌM version khác CÓ dấu (cùng số + chữ)
+        # Neu chua co dau → TIM version khac CO dau (cung so + chu)
         best_with_format = self._find_formatted_version(most_common_plate, votes)
 
         if best_with_format:
             return best_with_format
 
-        # Không tìm thấy → trả về bản NHIỀU VOTES (không format)
+        # Khong tim thay → tra ve ban NHIEU VOTES (khong format)
         return most_common_plate
 
     def _find_formatted_version(self, base_plate, votes):
@@ -267,15 +267,15 @@ class PlateVotes:
         # Normalize base
         base_normalized = ''.join(c.upper() for c in base_plate if c.isalnum())
 
-        # Tìm các version có dấu
-        with_both = []      # Có cả - và .
-        with_dash = []      # Chỉ có -
-        with_dot = []       # Chỉ có .
+        # Tim cac version co dau
+        with_both = []      # Co ca - va .
+        with_dash = []      # Chi co -
+        with_dot = []       # Chi co .
 
         for vote in votes:
             vote_normalized = ''.join(c.upper() for c in vote if c.isalnum())
 
-            # Cùng số + chữ?
+            # Cung so + chu?
             if vote_normalized == base_normalized:
                 has_dash = '-' in vote
                 has_dot = '.' in vote
@@ -287,7 +287,7 @@ class PlateVotes:
                 elif has_dot:
                     with_dot.append(vote)
 
-        # Ưu tiên: có cả 2 > chỉ dash > chỉ dot
+        # Uu tien: co ca 2 > chi dash > chi dot
         if with_both:
             return with_both[0]
         elif with_dash:
@@ -304,7 +304,7 @@ class PlateVotes:
         CHỈ SO SÁNH SỐ + CHỮ (bỏ hết ký tự đặc biệt)
         Ví dụ: "29A-179.90" == "29A17990" == "29A-17990"
         """
-        # Normalize: CHỈ GIỮ SỐ VÀ CHỮ
+        # Normalize: CHI GIU SO VA CHU
         t1 = ''.join(c.upper() for c in text1 if c.isalnum())
         t2 = ''.join(c.upper() for c in text2 if c.isalnum())
 
@@ -312,7 +312,7 @@ class PlateVotes:
         if t1 == t2:
             return True
 
-        # Similarity ratio (cho phép sai lệch nhỏ)
+        # Similarity ratio (cho phep sai lech nho)
         ratio = SequenceMatcher(None, t1, t2).ratio()
         return ratio >= self.similarity_threshold
 

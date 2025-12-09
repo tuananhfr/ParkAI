@@ -18,6 +18,7 @@ class P2PClient:
         peer_id: str,
         peer_ip: str,
         peer_port: int,
+        this_central_id: str,
         on_message: Callable,
         on_connected: Optional[Callable] = None,
         on_disconnected: Optional[Callable] = None
@@ -25,6 +26,7 @@ class P2PClient:
         self.peer_id = peer_id
         self.peer_ip = peer_ip
         self.peer_port = peer_port
+        self.this_central_id = this_central_id
         self.on_message = on_message
         self.on_connected = on_connected
         self.on_disconnected = on_disconnected
@@ -37,8 +39,8 @@ class P2PClient:
 
     @property
     def uri(self) -> str:
-        """WebSocket URI"""
-        return f"ws://{self.peer_ip}:{self.peer_port}"
+        """WebSocket URI - connect to FastAPI WebSocket endpoint"""
+        return f"ws://{self.peer_ip}:{self.peer_port}/ws/p2p"
 
     async def start(self):
         """Start client and maintain connection"""
@@ -65,13 +67,13 @@ class P2PClient:
                 print(f"P2P Client {self.peer_id} error: {e}")
 
             if self.running:
-                print(f"🔄 Reconnecting to {self.peer_id} in {self.reconnect_delay}s...")
+                print(f"Reconnecting to {self.peer_id} in {self.reconnect_delay}s...")
                 await asyncio.sleep(self.reconnect_delay)
 
     async def _connect(self):
         """Connect to peer and listen for messages"""
         try:
-            print(f"🔗 Connecting to P2P peer {self.peer_id} ({self.uri})...")
+            print(f"Connecting to P2P peer {self.peer_id} ({self.uri})...")
 
             async with websockets.connect(
                 self.uri,
@@ -79,6 +81,14 @@ class P2PClient:
                 ping_timeout=10
             ) as websocket:
                 self.websocket = websocket
+
+                # Send identification message first
+                identification = {
+                    "peer_id": self.this_central_id
+                }
+                await websocket.send(json.dumps(identification))
+                print(f"Sent identification to {self.peer_id}: {self.this_central_id}")
+
                 self.connected = True
                 print(f"Connected to P2P peer {self.peer_id}")
 
@@ -91,7 +101,7 @@ class P2PClient:
                     await self._process_message(message)
 
         except websockets.exceptions.ConnectionClosed:
-            print(f"🔌 Disconnected from P2P peer {self.peer_id}")
+            print(f"Disconnected from P2P peer {self.peer_id}")
 
         except Exception as e:
             print(f"Error connecting to {self.peer_id}: {e}")

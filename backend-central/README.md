@@ -76,7 +76,7 @@ sudo systemctl status parking-central
 
 ---
 
-## 📡 API ENDPOINTS
+## API ENDPOINTS
 
 ### **Camera Management**
 - `GET /api/cameras` - Danh sách cameras
@@ -126,7 +126,7 @@ tail -f logs/*.log  # Nếu có logging
 
 ---
 
-## 🔍 TROUBLESHOOTING
+## TROUBLESHOOTING
 
 ### **Port đã được sử dụng:**
 ```bash
@@ -177,4 +177,4 @@ watch -n 1 'curl -s http://localhost:8000/api/cameras | jq .cameras.online'
 
 ---
 
-**� DONE! Server đang chạy tại http://localhost:8000**
+**� DONE! Server đang chạy tại http://localhost:8000**

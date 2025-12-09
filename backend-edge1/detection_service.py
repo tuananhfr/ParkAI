@@ -15,20 +15,19 @@ class Detection:
     def __init__(self, coords, category, conf, metadata, imx500, picam2):
         self.category = category
         self.conf = conf
-        # Use IMX500 convert_inference_coords như demo code
+        # Use IMX500 convert_inference_coords nhu demo code
         self.box = imx500.convert_inference_coords(coords, metadata, picam2)
 
 
 class DetectionService:
     """Service chạy AI detection"""
 
-    def __init__(self, camera_manager, websocket_manager, ocr_service=None, central_sync=None, barrier_controller=None, parking_manager=None):
+    def __init__(self, camera_manager, websocket_manager, ocr_service=None, central_sync=None, parking_manager=None):
         self.camera_manager = camera_manager
         self.websocket_manager = websocket_manager
         self.ocr_service = ocr_service
-        self.central_sync = central_sync  # Central sync service để gửi ảnh
-        self.barrier_controller = barrier_controller  # Barrier controller để mở/đóng
-        self.parking_manager = parking_manager  # Parking manager để process entry
+        self.central_sync = central_sync  # Central sync service de gui len central
+        self.parking_manager = parking_manager  # Parking manager de process entry tu dong
 
         self.intrinsics = camera_manager.get_intrinsics()
         self.imx500 = camera_manager.get_imx500()
@@ -44,21 +43,21 @@ class DetectionService:
         self.last_fps_time = time.time()
         self.frames_in_second = 0
 
-        # OCR throttling - chỉ chạy mỗi N frames
+        # OCR throttling - chi chay moi N frames
         self.ocr_frame_skip = config.OCR_FRAME_SKIP
 
-        # Plate tracker - Vote cho plate chính xác nhất
+        # Plate tracker - Vote cho plate chinh xac nhat
         self.plate_tracker = get_plate_tracker()
 
-        # ĐƠN GIẢN: CHỈ CAPTURE VÀ OCR 
-        # Capture ảnh tĩnh khi confidence cao, OCR trên ảnh đã capture
-        self.captured_frame_full = None      # Full crop chưa preprocess (để gửi frontend)
-        self.capture_timestamp = None        # Thời điểm capture
-        self.is_processing = False           # Đang xử lý plate đã capture
-        self.ocr_attempts = 0                # Số lần đã chạy OCR trên capture
-        self.last_processed_time = 0         # Thời điểm xử lý xong (cooldown)
-        self.captured_bbox = None            # Bbox của plate đã capture
-        self.processed_plates = {}           # {plate_id: timestamp} - Track plates đã process trong 15s
+        # DON GIAN: CHI CAPTURE VA OCR
+        # Capture anh tinh khi confidence cao, OCR tren anh da capture
+        self.captured_frame_full = None      # Full crop chua preprocess (de gui frontend)
+        self.capture_timestamp = None        # Thoi diem capture
+        self.is_processing = False           # Dang xu ly plate da capture
+        self.ocr_attempts = 0                # So lan da chay OCR tren capture
+        self.last_processed_time = 0         # Thoi diem xu ly xong (cooldown)
+        self.captured_bbox = None            # Bbox cua plate da capture
+        self.processed_plates = {}           # {plate_id: timestamp} - Track plates da process trong 15s
 
         # Statistics for debugging
         self.outputs_success = 0
@@ -91,13 +90,13 @@ class DetectionService:
                 if frame_data is None:
                     continue
 
-                # OPTIMIZATION: Không cần frame - IMX500 đã có bbox trong metadata
+                # OPTIMIZATION: Khong can frame - IMX500 da co bbox trong metadata
                 metadata = frame_data['metadata']
                 timestamp = frame_data['timestamp']
                 frame_id = frame_data['frame_id']
                 cached_outputs = frame_data.get('outputs')  # Get cached outputs (nếu có)
 
-                # Parse detections từ IMX500 metadata (đã có bbox sẵn)
+                # Parse detections tu IMX500 metadata (da co bbox san)
                 detections = self._parse_detections(metadata, cached_outputs)
 
                 # Update stats
@@ -111,13 +110,13 @@ class DetectionService:
                     self.last_fps_time = current_time
 
 
-                # TRIGGER-BASED PROCESSING 
-                # Chỉ capture và OCR khi confidence cao, không chạy OCR liên tục
+                # TRIGGER-BASED PROCESSING
+                # Chi capture va OCR khi confidence cao, khong chay OCR lien tuc
 
-                # Check timeout/cooldown để reset state
+                # Check timeout/cooldown de reset state
                 current_time = time.time()
 
-                # Check timeout: Nếu đang processing quá lâu (> CAPTURE_TIMEOUT) → Reset
+                # Check timeout: Neu dang processing qua lau (> CAPTURE_TIMEOUT) → Reset
                 if (self.is_processing and 
                     self.capture_timestamp is not None and
                     current_time - self.capture_timestamp > config.CAPTURE_TIMEOUT):
@@ -129,7 +128,7 @@ class DetectionService:
                 frame = frame_data.get('frame')
 
                 for detection in detections:
-                    # Detection object có .box (x, y, w, h) format
+                    # Detection object co .box (x, y, w, h) format
                     x, y, w, h = detection.box
                     category_idx = int(detection.category)
                     confidence = float(detection.conf)
@@ -145,11 +144,11 @@ class DetectionService:
                         'frame_id': frame_id
                     }
 
-                    #== CAPTURE LOGIC: Capture ảnh khi confidence CAO ==
-                    # Chỉ capture KHI:
-                    # 1. KHÔNG đang xử lý plate khác
+                    # == CAPTURE LOGIC: Capture anh khi confidence CAO ==
+                    # Chi capture KHI:
+                    # 1. KHONG dang xu ly plate khac
                     # 2. Confidence >= CAPTURE_CONFIDENCE_THRESHOLD
-                    # 3. Đã qua cooldown (2s sau lần xử lý trước)
+                    # 3. Da qua cooldown (2s sau lan xu ly truoc)
 
                     bbox = (x, y, w, h)
 
@@ -157,9 +156,9 @@ class DetectionService:
                     cooldown_ok = (current_time - self.last_processed_time >= config.CAPTURE_COOLDOWN)
                     
 
-                    # Chỉ capture nếu:
-                    # 1. Không đang xử lý plate khác
-                    # 2. Đã qua cooldown
+                    # Chi capture neu:
+                    # 1. Khong dang xu ly plate khac
+                    # 2. Da qua cooldown
                     if (not self.is_processing and
                         cooldown_ok and
                         confidence >= config.CAPTURE_CONFIDENCE_THRESHOLD and
@@ -181,19 +180,19 @@ class DetectionService:
                                 crop = frame[y_valid:y_valid+h_valid, x_valid:x_valid+w_valid]
 
                                 if crop.size > 0:
-                                    # CAPTURE! Lưu ảnh để xử lý
-                                    self.captured_frame_full = crop.copy()  # RAW crop (gửi frontend)
+                                    # CAPTURE! Luu anh de xu ly
+                                    self.captured_frame_full = crop.copy()  # RAW crop (gui frontend)
                                     self.captured_bbox = bbox
                                     self.capture_timestamp = current_time
                                     self.is_processing = True
                                     self.ocr_attempts = 0
 
-                                    # FLOW MỚI: GỬI ẢNH NGAY (chưa có text) 
-                                    # BƯỚC 1: Encode và gửi ảnh về frontend NGAY (chưa OCR)
+                                    # FLOW MOI: GUI ANH NGAY (chua co text)
+                                    # BUOC 1: Encode va gui anh ve frontend NGAY (chua OCR)
                                     _, buffer = cv2.imencode('.jpg', crop)
                                     crop_base64 = base64.b64encode(buffer).decode('utf-8')
 
-                                    # Gửi ảnh TRƯỚC (chưa có text)
+                                    # Gui anh TRUOC (chua co text)
                                     image_only_result = {
                                         'class': 'license_plate',
                                         'confidence': confidence,
@@ -208,11 +207,11 @@ class DetectionService:
                         except Exception as e:
                             pass
 
-                    # LUÔN ADD detection vào results
+                    # LUON ADD detection vao results
                     detection_results.append(detection_dict)
 
-                #== OCR ON CAPTURED FRAME (TRIGGER-BASED) ==
-                # Chỉ chạy OCR trên ảnh đã CAPTURE, KHÔNG chạy mỗi frame!
+                # == OCR ON CAPTURED FRAME (TRIGGER-BASED) ==
+                # Chi chay OCR tren anh da CAPTURE, KHONG chay moi frame!
 
                 if (self.is_processing and
                     self.captured_frame_full is not None and
@@ -224,12 +223,12 @@ class DetectionService:
                     try:
                         import cv2
 
-                        # Lấy crop đã capture
+                        # Lay crop da capture
                         crop = self.captured_frame_full.copy()
                         h, w = crop.shape[:2]
 
                         # Preprocessing
-                        # 1. Resize nếu quá nhỏ
+                        # 1. Resize neu qua nho
                         if h < 60:
                             scale = 60 / h
                             new_w = int(w * scale)
@@ -250,32 +249,12 @@ class DetectionService:
                         text = self.ocr_service.recognize(crop)
 
                         if text and self._is_valid_vietnamese_plate(text):
-                            # OCR thành công!
+                            # OCR thanh cong!
 
-                            # FLOW ĐƠN GIẢN: GỬI TEXT SAU KHI OCR XONG 
-                            # BƯỚC 2: Gửi TEXT sau khi OCR xong (ảnh đã gửi ở BƯỚC 1)
-
-                            # BƯỚC 3: CHECK BIỂN SỐ CÓ TRONG GARA CHƯA
+                            # BUOC 1: CHECK BIEN SO CO TRONG GARA CHUA
                             validation_result = self._validate_plate_for_gate(text)
 
-                            text_result = {
-                                'class': 'license_plate',
-                                'confidence': 0.95,  # High confidence vì đã capture tốt
-                                'bbox': list(self.captured_bbox),
-                                'text': text,
-                                'finalized': True,
-                                'ocr_status': 'success',  # ← OCR thành công
-                                'validation_status': validation_result['status'],  # 'valid' | 'invalid'
-                                'validation_message': validation_result.get('message', ''),
-                                'timestamp': time.time(),
-                                'frame_id': frame_id
-                            }
-
-                            # Gửi TEXT qua WebSocket (ảnh đã gửi trước đó)
-                            self.websocket_manager.broadcast_detections([text_result])
-                            
-
-                            # Deduplication - Đã process plate này trong 15s gần đây chưa?
+                            # Deduplication - Da process plate nay trong 15s gan day chua?
                             import re
                             plate_normalized = re.sub(r'[^A-Z0-9]', '', text.upper())
                             current_time_check = time.time()
@@ -293,27 +272,86 @@ class DetectionService:
                             # Mark as processed
                             self.processed_plates[plate_normalized] = current_time_check
 
-                            # Reset state để sẵn sàng cho plate tiếp theo
+                            # BUOC 2: TU DONG LUU DB NEU VALID
+                            entry_saved = False
+                            entry_result = None
+
+                            if validation_result['status'] == 'valid' and self.parking_manager:
+                                # Luu vao DB ngay (khong can barrier)
+                                entry_result = self.parking_manager.process_entry(
+                                    plate_text=text,
+                                    camera_id=config.CAMERA_ID,
+                                    camera_type=config.CAMERA_TYPE,
+                                    camera_name=config.CAMERA_NAME,
+                                    confidence=0.95,
+                                    source='auto'
+                                )
+
+                                if entry_result.get('success'):
+                                    entry_saved = True
+                                    print(f"Auto saved: {text} - {entry_result.get('message')}")
+
+                                    # Sync to Central (neu co)
+                                    if self.central_sync:
+                                        event_type = "ENTRY" if config.CAMERA_TYPE == "ENTRY" else "EXIT"
+                                        sync_data = {
+                                            "plate_text": text,
+                                            "confidence": 0.95,
+                                            "source": "auto",
+                                            "entry_id": entry_result.get('entry_id')
+                                        }
+
+                                        # Them thong tin cho EXIT
+                                        if event_type == "EXIT":
+                                            if entry_result.get('entry_time'):
+                                                sync_data['entry_time'] = entry_result.get('entry_time')
+                                            if entry_result.get('duration'):
+                                                sync_data['duration'] = entry_result.get('duration')
+                                            if entry_result.get('fee') is not None:
+                                                sync_data['fee'] = entry_result.get('fee')
+
+                                        self.central_sync.send_event(event_type, sync_data)
+
+                            # BUOC 3: GUI KET QUA QUA WEBSOCKET
+                            text_result = {
+                                'class': 'license_plate',
+                                'confidence': 0.95,
+                                'bbox': list(self.captured_bbox),
+                                'text': text,
+                                'finalized': True,
+                                'ocr_status': 'success',
+                                'validation_status': validation_result['status'],
+                                'validation_message': validation_result.get('message', ''),
+                                'entry_saved': entry_saved,  # Flag: đã lưu DB chưa
+                                'entry_result': entry_result,  # Kết quả lưu DB (nếu có)
+                                'timestamp': time.time(),
+                                'frame_id': frame_id
+                            }
+
+                            # Gui TEXT qua WebSocket
+                            self.websocket_manager.broadcast_detections([text_result])
+
+                            # Reset state de san sang cho plate tiep theo
                             self.last_processed_time = current_time_check
                             self._reset_capture_state()
 
                         else:
-                            # OCR không hợp lệ
+                            # OCR khong hop le
 
-                            # Nếu đã hết attempts → OCR FAIL → Reset ngay (không mở barrier)
+                            # Neu da het attempts → OCR FAIL → Reset ngay (khong mo barrier)
                             if self.ocr_attempts >= config.MAX_OCR_ATTEMPTS:
                                 self.last_processed_time = current_time
                                 self._reset_capture_state()
 
                     except Exception as e:
-                        # Reset nếu lỗi (OCR error)
+                        # Reset neu loi (OCR error)
                         self.last_processed_time = current_time
                         self._reset_capture_state()
 
                 if len(detection_results) > 0:
                     self.total_detections += len(detection_results)
 
-                    # GỬI MỌI FRAME CÓ DETECTION (để boxes hiển thị liên tục)
+                    # GUI MOI FRAME CO DETECTION (de boxes hien thi lien tuc)
                     self.websocket_manager.broadcast_detections(detection_results)
 
             except Exception as e:
@@ -322,11 +360,11 @@ class DetectionService:
     def _parse_detections(self, metadata, cached_outputs=None):
         """Parse detections từ IMX500 - Giống logic demo code"""
         try:
-            # Use cached outputs từ camera_manager (nếu có) để tránh gọi get_outputs 2 lần
+            # Use cached outputs tu camera_manager (neu co) de tranh goi get_outputs 2 lan
             if cached_outputs is not None:
                 outputs = cached_outputs
             else:
-                # Fallback: extract từ metadata (legacy path)
+                # Fallback: extract tu metadata (legacy path)
                 outputs = self.imx500.get_outputs(metadata, add_batch=True)
 
             # Track statistics
@@ -339,7 +377,7 @@ class DetectionService:
 
             # Check if model has postprocess built-in
             if self.intrinsics.postprocess == "nanodet":
-                # Use nanodet postprocessing (như demo code)
+                # Use nanodet postprocessing (nhu demo code)
                 from picamera2.devices.imx500 import postprocess_nanodet_detection
                 from picamera2.devices.imx500.postprocess import scale_boxes
 
@@ -352,7 +390,7 @@ class DetectionService:
                 )[0]
                 boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
             else:
-                # Model có built-in postprocessing - THEO DEMO CODE
+                # Model co built-in postprocessing - THEO DEMO CODE
                 boxes, scores, classes = outputs[0][0], outputs[1][0], outputs[2][0]
 
                 # Normalize boxes
@@ -364,11 +402,11 @@ class DetectionService:
                 if self.intrinsics.bbox_order == "xy":
                     boxes = boxes[:, [1, 0, 3, 2]]
 
-                # Reshape - ĐÚNG NHƯ DEMO (không có flatten!)
+                # Reshape - DUNG NHU DEMO (khong co flatten!)
                 boxes = np.array_split(boxes, 4, axis=1)
                 boxes = zip(*boxes)
 
-            # Filter by threshold và create Detection objects
+            # Filter by threshold va create Detection objects
             detections = []
             raw_count = 0
             filtered_count = 0
@@ -377,17 +415,17 @@ class DetectionService:
                 if score > config.DETECTION_THRESHOLD:
                     raw_count += 1
 
-                    # DÙNG Detection class như demo code - convert_inference_coords() sẽ handle đúng!
+                    # DUNG Detection class nhu demo code - convert_inference_coords() se handle dung!
                     detection = Detection(box, category, score, metadata, self.imx500, self.picam2)
 
-                    # Get bbox đã được convert sang pixel coords
+                    # Get bbox da duoc convert sang pixel coords
                     x, y, w, h = detection.box
 
                     # Calculate aspect ratio
                     aspect_ratio = w / h if h > 0 else 0
 
-                    # Biển số Việt Nam: width/height thường 2.0 - 4.5
-                    # Filter: chỉ accept boxes NẰM NGANG
+                    # Bien so Viet Nam: width/height thuong 2.0 - 4.5
+                    # Filter: chi accept boxes NAM NGANG
                     if aspect_ratio > config.MIN_PLATE_ASPECT_RATIO:
                         detections.append(detection)
                         filtered_count += 1
@@ -396,7 +434,7 @@ class DetectionService:
             return detections
 
         except Exception as e:
-            # LUÔN log exception đầu tiên, sau đó mỗi 50 frames
+            # LUON log exception dau tien, sau do moi 50 frames
             if not hasattr(self, '_parse_error_logged') or self.total_frames % 50 == 0:
                 self._parse_error_logged = True
             return []
@@ -415,23 +453,23 @@ class DetectionService:
         """
         import re
 
-        if not text or len(text) < 7:  # Tối thiểu 7 ký tự
+        if not text or len(text) < 7:  # Toi thieu 7 ky tu
             return False
 
-        # Clean text - BỎ TẤT CẢ KÝ TỰ ĐẶC BIỆT (giữ số + chữ + dấu -)
+        # Clean text - BO TAT CA KY TU DAC BIET (giu so + chu + dau -)
         clean = text.strip().upper().replace(" ", "").replace(".", "")
 
-        # Patterns biển số VN - ACCEPT 1-2 CHỮ
+        # Patterns bien so VN - ACCEPT 1-2 CHU
         patterns = [
-            # Xe ô tô (2 số + 1-2 chữ + 4-6 số)
+            # Xe o to (2 so + 1-2 chu + 4-6 so)
             r'^\d{2}[A-Z]{1,2}\d{4,6}$',           # 29A12345, 29AB12345
             r'^\d{2}[A-Z]{1,2}-\d{4,6}$',          # 29A-12345, 29AB-12345
 
-            # Xe công vụ (3 số + 1-2 chữ + 4-6 số)
+            # Xe cong vu (3 so + 1-2 chu + 4-6 so)
             r'^\d{3}[A-Z]{1,2}\d{4,6}$',           # 123A12345, 123AB12345
             r'^\d{3}[A-Z]{1,2}-\d{4,6}$',          # 123A-12345
 
-            # Xe máy có format đặc biệt (29A1-12345)
+            # Xe may co format dac biet (29A1-12345)
             r'^\d{2}[A-Z]\d-?\d{4,5}$',            # 29A112345, 29A1-12345
         ]
 
@@ -439,11 +477,11 @@ class DetectionService:
             if re.match(pattern, clean):
                 return True
 
-        # Kiểm tra tỷ lệ số/chữ hợp lý
+        # Kiem tra ty le so/chu hop ly
         digits = sum(c.isdigit() for c in clean)
         letters = sum(c.isalpha() for c in clean)
 
-        # Biển số VN: 70-90% là số, 10-30% là chữ (accept 1-3 chữ)
+        # Bien so VN: 70-90% la so, 10-30% la chu (accept 1-3 chu)
         if len(clean) >= 7 and digits >= 5 and 1 <= letters <= 3:
             return True
 
@@ -478,7 +516,7 @@ class DetectionService:
         import config
         import re
         
-        # Validate và normalize plate
+        # Validate va normalize plate
         plate_id, display_text = self.parking_manager.validate_plate(plate_text)
         if not plate_id:
             return {
@@ -490,7 +528,7 @@ class DetectionService:
         existing = self.parking_manager.db.find_entry_in(plate_id)
         
         if config.CAMERA_TYPE == "ENTRY":
-            # Cổng VÀO: Xe chưa có trong gara → valid
+            # Cong VAO: Xe chua co trong gara → valid
             if existing:
                 return {
                     'status': 'invalid',
@@ -500,7 +538,7 @@ class DetectionService:
                 return {'status': 'valid', 'message': ''}
         
         elif config.CAMERA_TYPE == "EXIT":
-            # Cổng RA: Xe đã có trong gara → valid
+            # Cong RA: Xe da co trong gara → valid
             if existing:
                 return {'status': 'valid', 'message': ''}
             else:

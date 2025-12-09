@@ -1,7 +1,4 @@
 {
   "fee_base": 0.5,
-  "fee_per_hour": 25000,
-  "fee_overnight": 0,
-  "fee_daily_max": 0
+  "fee_per_hour": 25000
 }
-

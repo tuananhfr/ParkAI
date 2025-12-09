@@ -1,3 +1,16 @@
+# Virtualenv (nếu tạo riêng)
+venv/
+.venv/
+
+# Bytecode
+__pycache__/
+*.pyc
+
+# Local data
+data/*.db
+
+# Logs
+*.log
 __pycache__
 backend-env/
 

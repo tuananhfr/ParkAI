@@ -6,13 +6,14 @@ import { validatePlateNumber } from "@/utils/plateValidation";
  */
 const PlateInput = ({
   plateText,
-
+  plateSource,
   onPlateConfirm,
+  onPlateChange,
 }) => {
   const [inputValue, setInputValue] = useState(plateText || "");
   const [isEditing, setIsEditing] = useState(false);
 
-  // Sync với plateText từ props (khi có detection từ camera)
+  //Sync voi plateText tu props (khi co detection tu camera)
   useEffect(() => {
     if (!isEditing && plateText !== inputValue) {
       setInputValue(plateText || "");
@@ -62,7 +63,7 @@ const PlateInput = ({
   };
 
   const handleBlur = () => {
-    // Khi blur, nếu đang edit thì confirm
+    //Khi blur, neu dang edit thi confirm
     if (isEditing && inputValue.trim()) {
       handleConfirm();
     } else {

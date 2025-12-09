@@ -20,11 +20,11 @@ class OCRService:
         self.ocr_provider = None
         self.class_names = None
 
-        # PRIORITY 1: YOLO (ultralytics - ĐƠN GIẢN NHẤT)
+        # PRIORITY 1: YOLO (ultralytics - DON GIAN NHAT)
         if self._try_init_yolo():
             return
 
-        # PRIORITY 2: Raw ONNX (phức tạp hơn)
+        # PRIORITY 2: Raw ONNX (phuc tap hon)
         print(" YOLO not available, trying raw ONNX...")
         self.input_shape = None
         self.input_name = None
@@ -47,7 +47,7 @@ class OCRService:
             "error": self.error
         }
 
-    # YOLO (Ultralytics) 
+    # YOLO (Ultralytics)
     def _try_init_yolo(self):
         """Khởi tạo YOLO OCR - GIỐNG CODE DEMO"""
         model_path = config.ONNX_OCR_MODEL_PATH
@@ -100,7 +100,7 @@ class OCRService:
             if not char_data:
                 return None
 
-            # Sort và ghép text
+            # Sort va ghep text
             text = self._sort_chars_yolo(char_data)
             return text
 
@@ -115,7 +115,7 @@ class OCRService:
         if not boxes:
             return ""
 
-        # Get class names (fallback nếu None)
+        # Get class names (fallback neu None)
         if self.ocr.names is None:
             # Vietnamese plate charset (36 classes: 0-9, A-Z)
             charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -129,8 +129,8 @@ class OCRService:
             cls = int(box[5])
             label = names.get(cls, str(cls))
 
-            # Cho phép đọc TẤT CẢ ký tự (bao gồm -, .)
-            # Voting sẽ normalize sau
+            # Cho phep doc TAT CA ky tu (bao gom -, .)
+            # Voting se normalize sau
             if label:
                 chars.append([(x1+x2)/2, (y1+y2)/2, str(label)])
 
@@ -151,7 +151,7 @@ class OCRService:
         else:
             return "".join([c[2] for c in sorted(chars, key=lambda x: x[0])])
 
-    # ONNX Runtime 
+    # ONNX Runtime
     def _try_init_onnx(self):
         """Khởi tạo ONNX OCR"""
         model_path = config.ONNX_OCR_MODEL_PATH
@@ -313,7 +313,7 @@ class OCRService:
             scale_x = img_w / model_w
             scale_y = img_h / model_h
 
-            # Convert boxes và tạo char_data
+            # Convert boxes va tao char_data
             char_data = []
             for box, cls, conf in zip(boxes, class_ids, confidences):
                 x_center, y_center, w, h = box
@@ -338,7 +338,7 @@ class OCRService:
 
                 char_data.append([x1, y1, x2, y2, float(conf), int(cls)])
 
-            # Sort và ghép text
+            # Sort va ghep text
             text = self._sort_chars(char_data)
             return text
 
@@ -438,8 +438,8 @@ class OCRService:
             x1, y1, x2, y2, conf, cls = box
             label = charset[cls] if cls < len(charset) else str(cls)
 
-            # Cho phép đọc TẤT CẢ ký tự (bao gồm -, .)
-            # Voting sẽ normalize sau
+            # Cho phep doc TAT CA ky tu (bao gom -, .)
+            # Voting se normalize sau
             if label:
                 chars.append([(x1+x2)/2, (y1+y2)/2, str(label)])
 
@@ -460,7 +460,7 @@ class OCRService:
         else:
             return "".join([c[2] for c in sorted(chars, key=lambda x: x[0])])
 
-    # Public API 
+    # Public API
     def recognize(self, plate_img):
         """Đọc text từ plate image"""
         if not self.is_ready():
@@ -490,7 +490,7 @@ class OCRService:
             if self.ocr_type == 'onnx':
                 return self._read_onnx(plate_img)
             else:
-                # YOLO không return confidence riêng
+                # YOLO khong return confidence rieng
                 text = self.recognize(plate_img)
                 if text:
                     return {'text': text, 'confidence': 0.9}

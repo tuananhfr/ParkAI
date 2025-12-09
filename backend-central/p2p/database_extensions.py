@@ -194,6 +194,27 @@ def get_sync_state(self):
         return [dict(row) for row in results]
 
 
+def init_p2p_tables(database_instance):
+    """Initialize P2P tables if they don't exist"""
+    with database_instance.lock:
+        conn = sqlite3.connect(database_instance.db_file)
+        cursor = conn.cursor()
+
+        # Create p2p_sync_state table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS p2p_sync_state (
+                peer_central_id TEXT PRIMARY KEY,
+                last_sync_timestamp INTEGER NOT NULL,
+                last_sync_time TEXT,
+                updated_at TEXT
+            )
+        """)
+
+        conn.commit()
+        conn.close()
+        print("P2P tables initialized")
+
+
 def patch_database_for_p2p(database_instance):
     """
     Monkey-patch CentralDatabase instance với P2P methods
@@ -203,6 +224,10 @@ def patch_database_for_p2p(database_instance):
         patch_database_for_p2p(database)
         # Now database has P2P methods
     """
+    # First, initialize P2P tables
+    init_p2p_tables(database_instance)
+
+    # Then patch methods
     database_instance.add_vehicle_entry_p2p = add_vehicle_entry_p2p.__get__(database_instance)
     database_instance.update_vehicle_exit_p2p = update_vehicle_exit_p2p.__get__(database_instance)
     database_instance.event_exists = event_exists.__get__(database_instance)

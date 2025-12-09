@@ -19,12 +19,12 @@ class ConfigManager:
         from urllib.parse import urlparse
         import socket
 
-        # Parse edge cameras để trích xuất IP từ base_url
+        # Parse edge cameras de trich xuat IP tu base_url
         edge_cameras = {}
         for cam_id, cam_config in config.EDGE_CAMERAS.items():
             base_url = cam_config.get("base_url", "")
 
-            # Parse IP và port từ base_url
+            # Parse IP va port tu base_url
             parsed = urlparse(base_url)
             ip = parsed.hostname or ""
 
@@ -34,7 +34,7 @@ class ConfigManager:
                 "camera_type": cam_config.get("camera_type", "ENTRY")  # ENTRY | EXIT
             }
 
-        # Auto-detect Central IP nếu không có trong config hoặc là "auto"
+        # Auto-detect Central IP neu khong co trong config hoac la "auto"
         central_ip = config.CENTRAL_SERVER_IP if hasattr(config, "CENTRAL_SERVER_IP") else ""
         if not central_ip or central_ip in ["auto", "", "127.0.0.1", "localhost"]:
             # Auto-detect local IP
@@ -61,8 +61,6 @@ class ConfigManager:
             "parking": {
                 "fee_base": config.FEE_BASE,
                 "fee_per_hour": config.FEE_PER_HOUR,
-                "fee_overnight": config.FEE_OVERNIGHT,
-                "fee_daily_max": config.FEE_DAILY_MAX,
                 "api_url": config.PARKING_API_URL if hasattr(config, "PARKING_API_URL") else ""
             },
             "staff": {
@@ -86,11 +84,11 @@ class ConfigManager:
     def update_config(self, new_config: Dict[str, Any]) -> bool:
         """Cập nhật config vào file config.py"""
         try:
-            # Đọc file hiện tại
+            # Doc file hien tai
             with open(self.config_file, 'r', encoding='utf-8') as f:
                 content = f.read()
 
-            # Update từng section
+            # Update tung section
             if "server" in new_config:
                 content = self._update_value(content, "SERVER_HOST", new_config["server"]["host"], is_string=True)
                 content = self._update_value(content, "SERVER_PORT", new_config["server"]["port"])
@@ -104,10 +102,6 @@ class ConfigManager:
                     content = self._update_value(content, "FEE_BASE", parking_config["fee_base"])
                 if "fee_per_hour" in parking_config:
                     content = self._update_value(content, "FEE_PER_HOUR", parking_config["fee_per_hour"])
-                if "fee_overnight" in parking_config:
-                    content = self._update_value(content, "FEE_OVERNIGHT", parking_config["fee_overnight"])
-                if "fee_daily_max" in parking_config:
-                    content = self._update_value(content, "FEE_DAILY_MAX", parking_config["fee_daily_max"])
                 if "api_url" in parking_config:
                     content = self._update_value(content, "PARKING_API_URL", parking_config["api_url"], is_string=True)
 
@@ -130,9 +124,9 @@ class ConfigManager:
             if "central_sync" in new_config:
                 servers = new_config["central_sync"].get("servers", [])
                 servers_json = json.dumps(servers, ensure_ascii=False)
-                # Escape quotes và backslashes trong JSON string cho Python string
+                # Escape quotes va backslashes trong JSON string cho Python string
                 servers_json_escaped = servers_json.replace('\\', '\\\\').replace('"', '\\"')
-                # Update với JSON string trong os.getenv, match cả dòng có thể có comment
+                # Update voi JSON string trong os.getenv, match ca dong co the co comment
                 pattern = rf'^CENTRAL_SYNC_SERVERS\s*=\s*os\.getenv\([^)]+\)'
                 replacement = f'CENTRAL_SYNC_SERVERS = os.getenv("CENTRAL_SYNC_SERVERS", "{servers_json_escaped}")'
                 content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
@@ -140,7 +134,7 @@ class ConfigManager:
             if "edge_cameras" in new_config:
                 content = self._update_edge_cameras(content, new_config["edge_cameras"])
 
-            # Ghi lại file
+            # Ghi lai file
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 f.write(content)
 
@@ -160,7 +154,7 @@ class ConfigManager:
             pattern = rf'^{key}\s*=\s*"[^"]*"'
             replacement = f'{key} = "{value}"'
         else:
-            # Hỗ trợ cả số nguyên lẫn số thực (vd: 0.5)
+            # Ho tro ca so nguyen lan so thuc (vd: 0.5)
             pattern = rf'^{key}\s*=\s*[-+]?\d*\.?\d+'
             replacement = f'{key} = {value}'
 
@@ -184,7 +178,7 @@ class ConfigManager:
 
     def _update_edge_cameras(self, content: str, cameras: Dict[int, Dict[str, Any]]) -> str:
         """Update EDGE_CAMERAS dictionary"""
-        # Tìm vị trí EDGE_CAMERAS
+        # Tim vi tri EDGE_CAMERAS
         start_pattern = r'EDGE_CAMERAS\s*=\s*\{'
         end_pattern = r'^\}'
 
@@ -192,7 +186,7 @@ class ConfigManager:
         if not match_start:
             return content
 
-        # Tìm dấu } đóng của dictionary
+        # Tim dau } dong cua dictionary
         start_pos = match_start.end()
         brace_count = 1
         end_pos = start_pos
@@ -237,7 +231,6 @@ class ConfigManager:
             lines.append(f'        "default_mode": os.getenv("EDGE{cam_id}_DEFAULT_MODE", "annotated"),')
             lines.append(f'        "supports_annotated": True,')
             lines.append(f'        "info_path": "/api/camera/info",')
-            lines.append(f'        "open_barrier_path": "/api/open-barrier",')
             lines.append(f"    }},")
 
         lines.append("}")

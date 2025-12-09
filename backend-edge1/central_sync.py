@@ -68,7 +68,7 @@ class CentralSyncService:
         """Loop gửi events lên central"""
         while self.running:
             try:
-                # Get event from queue (block với timeout)
+                # Get event from queue (block voi timeout)
                 event = self.event_queue.get(timeout=1.0)
 
                 # Send to central
@@ -79,7 +79,7 @@ class CentralSyncService:
                     self.last_sync_time = time.time()
                 else:
                     self.events_failed += 1
-                    # TODO: Retry logic hoặc save to local DB
+                    # TODO: Retry logic hoac save to local DB
 
             except Exception as e:
                 # Queue empty - continue

@@ -23,11 +23,10 @@ from detection_service import DetectionService
 from ocr_service import OCRService
 from websocket_manager import WebSocketManager
 from parking_manager import ParkingManager
-from barrier_controller import BarrierController
 from central_sync import CentralSyncService
 from config_manager import ConfigManager
 
-# FastAPI App 
+# FastAPI App
 app = FastAPI(title="License Plate Detection API")
 
 app.add_middleware(
@@ -38,13 +37,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global Instances 
+# Global Instances
 camera_manager = None
 detection_service = None
 ocr_service = None
 websocket_manager = WebSocketManager()
 parking_manager = None
-barrier_controller = None
 central_sync = None
 config_manager = ConfigManager()
 
@@ -62,17 +60,17 @@ def _suppress_stun_errors(loop, context):
     message = context.get('message', '')
     source_traceback = str(context.get('source_traceback', ''))
     
-    # Ignore InvalidStateError từ STUN transaction retries
+    # Ignore InvalidStateError tu STUN transaction retries
     if exception and isinstance(exception, asyncio.InvalidStateError):
         if 'Transaction.__retry' in message or 'stun' in message.lower() or 'Transaction.__retry' in source_traceback:
-            return  # Suppress lỗi này
+            return  # Suppress loi nay
     
-    # In các lỗi khác như bình thường
+    # In cac loi khac nhu binh thuong
     default_handler = loop.get_exception_handler()
     if default_handler and default_handler != _suppress_stun_errors:
         default_handler(loop, context)
     else:
-        # Fallback: in ra console nếu không có handler mặc định
+        # Fallback: in ra console neu khong co handler mac dinh
         if exception:
             import traceback
             traceback.print_exception(type(exception), exception, exception.__traceback__)
@@ -86,11 +84,11 @@ async def safe_close_pc(pc):
     if pc is None:
         return
     try:
-        # Đợi một chút để STUN transactions có thời gian dừng
+        # Doi mot chut de STUN transactions co thoi gian dung
         await asyncio.sleep(0.1)
         await pc.close()
     except Exception:
-        # Ignore tất cả errors khi cleanup - có thể là STUN transaction đã bị cancel
+        # Ignore tat ca errors khi cleanup - co the la STUN transaction da bi cancel
         pass
     finally:
         pcs.discard(pc)
@@ -124,7 +122,7 @@ def _ocr_state():
         "error": getattr(ocr_service, "error", "not_initialized")
     }
 
-# WebRTC Video Track 
+# WebRTC Video Track
 class CameraVideoTrack(VideoStreamTrack):
     """Video track - chỉ stream raw camera"""
     kind = "video"
@@ -186,23 +184,23 @@ class AnnotatedVideoTrack(VideoStreamTrack):
 
         return new_frame
 
-# Startup & Shutdown 
+# Startup & Shutdown
 @app.on_event("startup")
 async def startup():
     # Suppress STUN transaction InvalidStateError warnings
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(_suppress_stun_errors)
-    global camera_manager, detection_service, ocr_service, parking_manager, barrier_controller, central_sync
-    
+    global camera_manager, detection_service, ocr_service, parking_manager, central_sync
+
     try:
         # Set event loop cho WebSocket manager
         loop = asyncio.get_running_loop()
         websocket_manager.set_event_loop(loop)
-        
+
         # Initialize camera
         camera_manager = CameraManager(config.MODEL_PATH, config.LABELS_PATH)
         camera_manager.start()
-        
+
         # Initialize OCR
         if config.ENABLE_OCR:
             ocr_service = OCRService()
@@ -210,20 +208,12 @@ async def startup():
                 status = ocr_service.get_status()
         else:
             ocr_service = None
-        
+
         # Initialize parking manager
         parking_manager = ParkingManager(db_file=config.DB_FILE)
 
-        # Initialize barrier controller
-        barrier_controller = BarrierController(
-            enabled=config.BARRIER_ENABLED,
-            gpio_pin=config.BARRIER_GPIO_PIN,
-            auto_close_time=config.BARRIER_AUTO_CLOSE_TIME,
-            websocket_manager=websocket_manager  # Push status changes qua WebSocket
-        )
-
         # Initialize central sync service
-        # Theo thiết kế: nếu có CENTRAL_SERVER_URL thì tự bật sync (không bắt user tick thêm flag)
+        # Theo thiet ke: neu co CENTRAL_SERVER_URL thi tu bat sync (khong bat user tick them flag)
         if config.CENTRAL_SERVER_URL:
             central_sync = CentralSyncService(
                 central_url=config.CENTRAL_SERVER_URL,
@@ -235,14 +225,13 @@ async def startup():
         else:
             central_sync = None
 
-        # Initialize detection service (với central_sync, barrier_controller, parking_manager)
+        # Initialize detection service (voi central_sync, parking_manager)
         detection_service = DetectionService(
             camera_manager,
             websocket_manager,
             ocr_service,
-            central_sync,  # ← Pass central_sync để gửi ảnh lên Central
-            barrier_controller,  # ← Pass barrier_controller để mở/đóng barrier
-            parking_manager  # ← Pass parking_manager để process entry tự động
+            central_sync,  # ← Pass central_sync de gui event len Central
+            parking_manager  # ← Pass parking_manager de tu dong luu DB
         )
         detection_service.start()
 
@@ -252,7 +241,7 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    global camera_manager, detection_service, barrier_controller
+    global camera_manager, detection_service
 
     if detection_service:
         detection_service.stop()
@@ -260,16 +249,13 @@ async def shutdown():
     if camera_manager:
         camera_manager.stop()
 
-    if barrier_controller:
-        barrier_controller.cleanup()
-
-    # Cleanup tất cả peer connections
+    # Cleanup tat ca peer connections
     coros = [safe_close_pc(pc) for pc in list(pcs)]
     await asyncio.gather(*coros, return_exceptions=True)
     pcs.clear()
     
 
-# HTTP Routes 
+# HTTP Routes
 @app.get("/")
 async def index():
     return {
@@ -297,10 +283,10 @@ async def status():
     }
 
 
-# MJPEG Streaming (for PyQt6 Desktop App) 
+# MJPEG Streaming (for PyQt6 Desktop App)
 
-# Cache để broadcast frames đến nhiều clients mà chỉ encode 1 lần
-# Mỗi stream có timestamp riêng để tránh collision
+# Cache de broadcast frames den nhieu clients ma chi encode 1 lan
+# Moi stream co timestamp rieng de tranh collision
 _mjpeg_cache = {
     "raw": {"data": None, "timestamp": 0},
     "annotated": {"data": None, "timestamp": 0}
@@ -330,11 +316,11 @@ def generate_mjpeg_frames(annotated: bool = True):
             now = time.time()
             cache_key = "annotated" if annotated else "raw"
 
-            # Nếu cache mới hơn 30ms → dùng lại (broadcast)
+            # Neu cache moi hon 30ms → dung lai (broadcast)
             if _mjpeg_cache[cache_key]["data"] and (now - _mjpeg_cache[cache_key]["timestamp"]) < 0.033:
                 frame_bytes = _mjpeg_cache[cache_key]["data"]
             else:
-                # Encode frame mới
+                # Encode frame moi
                 if annotated:
                     frame = camera_manager.get_annotated_frame()
                 else:
@@ -345,12 +331,12 @@ def generate_mjpeg_frames(annotated: bool = True):
                     blank = np.zeros((config.RESOLUTION_HEIGHT, config.RESOLUTION_WIDTH, 3), dtype=np.uint8)
                     frame = blank
 
-                # Encode frame as JPEG (chỉ 1 lần!)
+                # Encode frame as JPEG (chi 1 lan!)
                 # Quality 85 = good balance between size and quality
                 _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
                 frame_bytes = buffer.tobytes()
 
-                # Lưu vào cache để broadcast
+                # Luu vao cache de broadcast
                 _mjpeg_cache[cache_key]["data"] = frame_bytes
                 _mjpeg_cache[cache_key]["timestamp"] = now
 
@@ -358,7 +344,7 @@ def generate_mjpeg_frames(annotated: bool = True):
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-        # Sleep để giữ ~30 FPS (không spam quá nhanh)
+        # Sleep de giu ~30 FPS (khong spam qua nhanh)
         time.sleep(0.033)  # ~30 FPS
 
 
@@ -429,7 +415,7 @@ async def webrtc_offer(request: Request):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        # Cleanup peer connection nếu có lỗi
+        # Cleanup peer connection neu co loi
         await safe_close_pc(pc)
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -438,7 +424,7 @@ async def webrtc_offer(request: Request):
 async def webrtc_offer_with_id(camera_id: int, request: Request, annotated: bool = Query(False)):
     """WebRTC offer endpoint với camera_id (tương thích với frontend)"""
     try:
-        # Edge chỉ có 1 camera, nên bỏ qua camera_id và gọi endpoint chính
+        # Edge chi co 1 camera, nen bo qua camera_id va goi endpoint chinh
         if annotated:
             return await webrtc_offer_annotated(request)
         else:
@@ -453,7 +439,7 @@ async def webrtc_offer_with_id(camera_id: int, request: Request, annotated: bool
 async def webrtc_offer_annotated_with_id(camera_id: int, request: Request):
     """WebRTC offer endpoint (annotated) với camera_id (tương thích với frontend)"""
     try:
-        # Edge chỉ có 1 camera, nên bỏ qua camera_id và gọi endpoint chính
+        # Edge chi co 1 camera, nen bo qua camera_id va goi endpoint chinh
         return await webrtc_offer_annotated(request)
     except Exception as e:
         import traceback
@@ -482,15 +468,15 @@ async def webrtc_offer_annotated(request: Request):
             if pc.connectionState in ["failed", "closed"]:
                 await safe_close_pc(pc)
 
-        # SỬ DỤNG AnnotatedVideoTrack thay vì CameraVideoTrack
+        # SU DUNG AnnotatedVideoTrack thay vi CameraVideoTrack
         annotated_track = AnnotatedVideoTrack(camera_manager)
         pc.addTrack(annotated_track)
 
         await pc.setRemoteDescription(offer)
-        # Tạo SDP answer
-        # NOTE: Không chỉnh sửa SDP để tránh bug aiortc khi cả hai đầu đều là aiortc
+        # Tao SDP answer
+        # NOTE: Khong chinh sua SDP de tranh bug aiortc khi ca hai dau deu la aiortc
         # (ValueError: None is not in list trong and_direction).
-        # Nếu cần control bitrate, nên làm bằng cách khác an toàn hơn.
+        # Neu can control bitrate, nen lam bang cach khac an toan hon.
         answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
 
@@ -502,21 +488,21 @@ async def webrtc_offer_annotated(request: Request):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        # Cleanup peer connection nếu có lỗi
+        # Cleanup peer connection neu co loi
         await safe_close_pc(pc)
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# WebSocket Route 
+# WebSocket Route
 @app.websocket("/ws/detections")
 async def websocket_detections(websocket: WebSocket):
     """WebSocket endpoint cho detections"""
     await websocket_manager.connect(websocket)
 
     try:
-        # Keep alive loop với ping every 10s
+        # Keep alive loop voi ping every 10s
         while True:
             try:
-                # Timeout 10s để send ping
+                # Timeout 10s de send ping
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
 
                 # Handle commands
@@ -524,7 +510,7 @@ async def websocket_detections(websocket: WebSocket):
                     await websocket.send_text("pong")
 
             except asyncio.TimeoutError:
-                # Send ping để keep connection alive
+                # Send ping de keep connection alive
                 try:
                     await websocket.send_text("ping")
                 except:
@@ -536,131 +522,7 @@ async def websocket_detections(websocket: WebSocket):
         websocket_manager.disconnect(websocket)
 
 
-# Parking Management API 
-
-@app.post("/api/open-barrier")
-async def open_barrier(request: Request):
-    """
-    User nhấn nút mở cửa - CHỈ MỞ BARRIER, KHÔNG LƯU DB
-
-    Body: {
-        "plate_text": "30G56789",
-        "confidence": 0.92,
-        "source": "auto" | "manual"
-    }
-    """
-    global barrier_controller
-
-    try:
-        data = await request.json()
-
-        plate_text = data.get('plate_text', '').strip()
-        confidence = data.get('confidence', 0.0)
-        source = data.get('source', 'manual')
-
-        if not plate_text:
-            return JSONResponse({
-                "success": False,
-                "error": "Biển số không được để trống"
-            }, status_code=400)
-
-        # VALIDATE BIỂN SỐ TRƯỚC KHI MỞ BARRIER 
-        # Validate format
-        plate_id, display_text = parking_manager.validate_plate(plate_text)
-        if not plate_id:
-            return JSONResponse({
-                "success": False,
-                "error": f"Biển số không hợp lệ: {plate_text}"
-            }, status_code=400)
-        
-        # Check trong DB theo logic cổng VÀO/RA
-        existing = parking_manager.db.find_entry_in(plate_id)
-
-        # PREPARE VEHICLE INFO 
-        vehicle_info = None
-
-        if config.CAMERA_TYPE == "ENTRY":
-            # Cổng VÀO: Xe chưa có trong gara → valid
-            if existing:
-                return JSONResponse({
-                    "success": False,
-                    "error": f"Xe {display_text} đã VÀO lúc {existing['entry_time']} tại {existing['entry_camera_name']}"
-                }, status_code=400)
-        elif config.CAMERA_TYPE == "EXIT":
-            # Cổng RA: Xe đã có trong gara → valid
-            if not existing:
-                return JSONResponse({
-                    "success": False,
-                    "error": f"Xe {display_text} không có trong gara!"
-                }, status_code=400)
-
-            # TÍNH TOÁN THÔNG TIN CHO CỔNG RA 
-            from datetime import datetime
-
-            # Check subscription
-            subscription_info = parking_manager.check_subscription(plate_id)
-            is_subscriber = subscription_info.get('is_subscriber', False)
-
-            # Tính duration
-            entry_time_str = existing['entry_time']
-            exit_time = datetime.now()
-            duration = parking_manager.calculate_duration(entry_time_str, exit_time)
-
-            # Tính fee (0 nếu thuê bao)
-            if is_subscriber:
-                fee = 0
-                customer_type = subscription_info.get('type', 'subscription')
-            else:
-                fee = parking_manager.calculate_fee(entry_time_str, exit_time)
-                customer_type = "regular"
-
-            # Prepare vehicle info
-            vehicle_info = {
-                "plate": display_text,
-                "entry_time": entry_time_str,
-                "exit_time": exit_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "duration": duration,
-                "fee": fee,
-                "customer_type": customer_type,
-                "is_subscriber": is_subscriber
-            }
-
-        # FLOW ĐƠN GIẢN: CHỈ MỞ BARRIER 
-        # Lưu thông tin tạm thời để lưu DB khi đóng barrier
-        pending_entry = {
-            "plate_text": plate_text,
-            "confidence": confidence,
-            "source": source
-        }
-
-        if barrier_controller:
-            barrier_controller.open_barrier(auto_close_delay=None, pending_entry=pending_entry)
-
-        response_data = {
-            "success": True,
-            "message": f"Barrier đã mở cho xe {plate_text}",
-            "barrier_opened": True,
-            "camera_info": {
-                "id": config.CAMERA_ID,
-                "name": config.CAMERA_NAME,
-                "type": config.CAMERA_TYPE
-            }
-        }
-
-        # Thêm vehicle info nếu có (cổng RA)
-        if vehicle_info:
-            response_data["vehicle_info"] = vehicle_info
-
-        return JSONResponse(response_data)
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=500)
-
+# Parking Management API
 
 @app.get("/api/history")
 async def get_history(limit: int = 100, today_only: bool = False, status: str = None):
@@ -696,15 +558,15 @@ async def get_stats():
     try:
         raw_stats = parking_manager.get_stats()
 
-        # Chuẩn hóa format giống backend central để frontend dùng chung hook useStats
-        # raw_stats từ edge Database.get_stats() hiện tại có dạng:
+        # Chuan hoa format giong backend central de frontend dung chung hook useStats
+        # raw_stats tu edge Database.get_stats() hien tai co dang:
         # {
-        #   "total_all_time": ...,
-        #   "today_total": ...,
-        #   "today_in": ...,
-        #   "today_out": ...,
-        #   "today_fee": ...,
-        #   "vehicles_inside": ...
+        # "total_all_time": ...,
+        # "today_total": ...,
+        # "today_in": ...,
+        # "today_out": ...,
+        # "today_fee": ...,
+        # "vehicles_inside": ...
         # }
         entries_today = raw_stats.get("today_in", 0)
         exits_today = raw_stats.get("today_out", 0)
@@ -803,11 +665,11 @@ async def init_sync_with_central(request: Request):
         import importlib
         importlib.reload(config)
 
-        # Restart central_sync service nếu đã có
+        # Restart central_sync service neu da co
         if central_sync:
             central_sync.stop()
 
-        # Khởi tạo central_sync service mới
+        # Khoi tao central_sync service moi
         from central_sync import CentralSyncService
         central_sync = CentralSyncService(
             central_url=config.CENTRAL_SERVER_URL,
@@ -854,21 +716,21 @@ async def update_config(request: Request):
         import importlib
         importlib.reload(config)
 
-        # Cập nhật central_sync nếu camera_type thay đổi
+        # Cap nhat central_sync neu camera_type thay doi
         if central_sync and "camera" in new_config and "type" in new_config["camera"]:
             central_sync.camera_type = config.CAMERA_TYPE
         
-        # SYNC CONFIG TO CENTRAL 
-        # Nếu có central server URL, gửi config đến central
+        # SYNC CONFIG TO CENTRAL
+        # Neu co central server URL, gui config den central
         if config.CENTRAL_SERVER_URL:
             try:
                 import httpx
-                # Lấy IP thực tế của edge
+                # Lay IP thuc te cua edge
                 edge_ip = config_manager._get_local_ip()
                 if config.SERVER_HOST not in ["0.0.0.0", "localhost", "127.0.0.1"]:
                     edge_ip = config.SERVER_HOST
                 
-                # Chuẩn bị config để sync
+                # Chuan bi config de sync
                 sync_config = {
                     "edge_cameras": {
                         "1": {
@@ -879,7 +741,7 @@ async def update_config(request: Request):
                     }
                 }
                 
-                # Gửi đến central
+                # Gui den central
                 central_url = config.CENTRAL_SERVER_URL.rstrip("/")
                 sync_endpoint = f"{central_url}/api/edge/sync-config"
                 
@@ -906,136 +768,6 @@ async def update_config(request: Request):
         }, status_code=500)
 
 
-@app.get("/api/barrier/status")
-async def barrier_status():
-    """Trạng thái barrier"""
-    global barrier_controller
-
-    if barrier_controller:
-        return JSONResponse({
-            "success": True,
-            **barrier_controller.get_status()
-        })
-    else:
-        return JSONResponse({
-            "success": False,
-            "error": "Barrier controller not initialized"
-        }, status_code=500)
-
-
-@app.post("/api/close-barrier")
-async def close_barrier(request: Request):
-    """
-    Đóng barrier từ frontend - ĐÓNG BARRIER VÀ LƯU DB
-    
-    Flow: Lưu DB SAU KHI barrier đóng (entry_time = thời điểm đóng)
-    """
-    global barrier_controller, parking_manager, central_sync
-
-    if not barrier_controller:
-        return JSONResponse({
-            "success": False,
-            "error": "Barrier controller not initialized"
-        }, status_code=500)
-
-    # Cho phép hoạt động ở simulation mode (BARRIER_ENABLED = False vẫn hoạt động được)
-    # barrier_controller đã có simulation mode sẵn
-
-    try:
-        # Đóng barrier và lấy pending entry (nếu có)
-        pending_entry = barrier_controller.close_barrier()
-        
-        # Nếu có pending entry → Lưu DB với entry_time = thời điểm barrier đóng
-        if pending_entry:
-            result = parking_manager.process_entry(
-                plate_text=pending_entry["plate_text"],
-                camera_id=config.CAMERA_ID,
-                camera_type=config.CAMERA_TYPE,
-                camera_name=config.CAMERA_NAME,
-                confidence=pending_entry["confidence"],
-                source=pending_entry["source"]
-            )
-            
-            if result.get('success'):
-                # Broadcast history update cho frontend (giống central)
-                try:
-                    event_type = "ENTRY" if config.CAMERA_TYPE == "ENTRY" else "EXIT"
-                    clean_result = {
-                        k: v
-                        for k, v in result.items()
-                        if k not in ("plate_image",) and not isinstance(v, bytes)
-                    }
-                    await broadcast_history_update({
-                        "event_type": event_type,
-                        "camera_id": config.CAMERA_ID,
-                        "camera_name": config.CAMERA_NAME,
-                        "camera_type": config.CAMERA_TYPE,
-                        **clean_result,
-                    })
-                except Exception as e:
-                    print(f"Failed to broadcast history update: {e}")
-
-                # Sync to Central (nếu có) - GỬI ĐẦY ĐỦ THÔNG TIN
-                if central_sync:
-                    event_type = "ENTRY" if config.CAMERA_TYPE == "ENTRY" else "EXIT"
-
-                    # Chuẩn bị data để sync
-                    sync_data = {
-                        "plate_text": pending_entry["plate_text"],
-                        "confidence": pending_entry["confidence"],
-                        "source": pending_entry["source"],
-                        "entry_id": result.get('entry_id'),  # ID từ edge DB
-                    }
-
-                    # Thêm thông tin cho ENTRY
-                    if event_type == "ENTRY":
-                        # Entry time sẽ được central tạo mới (thời điểm nhận event)
-                        pass
-
-                    # Thêm thông tin cho EXIT
-                    elif event_type == "EXIT":
-                        if result.get('entry_time'):
-                            sync_data['entry_time'] = result.get('entry_time')
-                        if result.get('duration'):
-                            sync_data['duration'] = result.get('duration')
-                        if result.get('fee') is not None:
-                            sync_data['fee'] = result.get('fee')
-
-                    central_sync.send_event(event_type, sync_data)
-
-                return JSONResponse({
-                    "success": True,
-                    "message": "Barrier đã đóng và đã lưu DB",
-                    "entry_saved": True,
-                    "entry_id": result.get('entry_id'),
-                    **barrier_controller.get_status()
-                })
-            else:
-                return JSONResponse({
-                    "success": True,
-                    "message": "Barrier đã đóng nhưng không thể lưu DB",
-                    "entry_saved": False,
-                    "entry_error": result.get('error'),
-                    **barrier_controller.get_status()
-                })
-        
-        # Không có pending entry → Chỉ đóng barrier (có thể là đóng thủ công không có xe)
-        return JSONResponse({
-            "success": True,
-            "message": "Barrier đã đóng",
-            "entry_saved": False,
-            **barrier_controller.get_status()
-        })
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return JSONResponse({
-            "success": False,
-            "error": str(e)
-        }, status_code=500)
-
-
 @app.get("/api/plate-image/{filename}")
 async def get_plate_image(filename: str):
     """
@@ -1043,7 +775,7 @@ async def get_plate_image(filename: str):
 
     Frontend có thể access: http://edge-ip:5000/api/plate-image/29A12345_1732867234.jpg
     """
-    # Security: Chỉ cho phép filename, không cho phép path traversal
+    # Security: Chi cho phep filename, khong cho phep path traversal
     filename = os.path.basename(filename)
 
     # Build full path
@@ -1059,7 +791,7 @@ async def get_plate_image(filename: str):
         }, status_code=404)
 
 
-# Frontend API (Compatible with Central) 
+# Frontend API (Compatible with Central)
 
 @app.get("/api/parking/history")
 async def get_parking_history(
@@ -1207,12 +939,12 @@ async def get_cameras():
     global camera_manager, config_manager
 
     try:
-        # Edge chỉ có 1 camera
+        # Edge chi co 1 camera
         is_running = camera_manager and camera_manager.running if camera_manager else False
 
-        # Lấy IP thực tế của máy edge từ config_manager
+        # Lay IP thuc te cua may edge tu config_manager
         edge_ip = config_manager._get_local_ip()
-        # Nếu SERVER_HOST là một IP cụ thể (không phải 0.0.0.0), dùng nó
+        # Neu SERVER_HOST la mot IP cu the (khong phai 0.0.0.0), dung no
         if config.SERVER_HOST not in ["0.0.0.0", "localhost", "127.0.0.1"]:
             edge_ip = config.SERVER_HOST
 
@@ -1232,8 +964,6 @@ async def get_cameras():
             "available": True,
             "base_url": base_url,
             "info_url": f"{base_url}/api/camera/info",
-            "open_barrier_url": f"{base_url}/api/open-barrier",
-            "barrier_status_url": f"{base_url}/api/barrier/status",
             "ws_url": ws_url
         }
 
@@ -1267,7 +997,7 @@ async def get_cameras():
         }, status_code=500)
 
 
-# WebSocket & Realtime Updates (Compatible with Central) 
+# WebSocket & Realtime Updates (Compatible with Central)
 
 # Global WebSocket clients
 history_websocket_clients: Set[WebSocket] = set()
@@ -1331,9 +1061,9 @@ async def websocket_camera_updates(websocket: WebSocket):
     try:
         is_running = camera_manager and camera_manager.running if camera_manager else False
         
-        # Lấy IP thực tế của máy edge từ config_manager
+        # Lay IP thuc te cua may edge tu config_manager
         edge_ip = config_manager._get_local_ip()
-        # Nếu SERVER_HOST là một IP cụ thể (không phải 0.0.0.0), dùng nó
+        # Neu SERVER_HOST la mot IP cu the (khong phai 0.0.0.0), dung no
         if config.SERVER_HOST not in ["0.0.0.0", "localhost", "127.0.0.1"]:
             edge_ip = config.SERVER_HOST
         
@@ -1365,7 +1095,7 @@ async def websocket_camera_updates(websocket: WebSocket):
         camera_websocket_clients.discard(websocket)
 
 
-# Staff & Subscription Management 
+# Staff & Subscription Management
 
 @app.get("/api/staff")
 async def get_staff():
@@ -1373,19 +1103,19 @@ async def get_staff():
     import os
     
     try:
-        # Nếu có STAFF_API_URL thì gọi API, nếu không thì đọc từ file JSON
+        # Neu co STAFF_API_URL thi goi API, neu khong thi doc tu file JSON
         staff_api_url = getattr(config, "STAFF_API_URL", "")
         staff_json_file = getattr(config, "STAFF_JSON_FILE", "data/staff.json")
         
         if staff_api_url and staff_api_url.strip():
-            # Gọi API external
+            # Goi API external
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(staff_api_url)
                 if response.status_code == 200:
                     staff_data = response.json()
                     staff_list = staff_data if isinstance(staff_data, list) else staff_data.get("staff", [])
                     
-                    # Lưu vào file JSON để dùng làm cache/fallback
+                    # Luu vao file JSON de dung lam cache/fallback
                     json_path = os.path.join(os.path.dirname(__file__), staff_json_file)
                     os.makedirs(os.path.dirname(json_path), exist_ok=True)
                     with open(json_path, 'w', encoding='utf-8') as f:
@@ -1397,10 +1127,10 @@ async def get_staff():
                         "source": "api"
                     })
                 else:
-                    # Nếu API lỗi, fallback về file JSON
+                    # Neu API loi, fallback ve file JSON
                     raise Exception(f"API returned status {response.status_code}")
         else:
-            # Đọc từ file JSON (fake data)
+            # Doc tu file JSON (fake data)
             json_path = os.path.join(os.path.dirname(__file__), staff_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -1441,14 +1171,14 @@ async def update_staff(request: Request):
                 "error": "Staff must be a list"
             }, status_code=400)
         
-        # Lấy đường dẫn file JSON
+        # Lay duong dan file JSON
         staff_json_file = getattr(config, "STAFF_JSON_FILE", "data/staff.json")
         json_path = os.path.join(os.path.dirname(__file__), staff_json_file)
         
-        # Tạo thư mục nếu chưa có
+        # Tao thu muc neu chua co
         os.makedirs(os.path.dirname(json_path), exist_ok=True)
         
-        # Ghi vào file JSON
+        # Ghi vao file JSON
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(staff_list, f, ensure_ascii=False, indent=2)
         
@@ -1472,25 +1202,25 @@ async def get_subscriptions():
     import os
     
     try:
-        # Nếu có SUBSCRIPTION_API_URL thì gọi API, nếu không thì đọc từ file JSON
+        # Neu co SUBSCRIPTION_API_URL thi goi API, neu khong thi doc tu file JSON
         subscription_api_url = getattr(config, "SUBSCRIPTION_API_URL", "")
         subscription_json_file = getattr(config, "SUBSCRIPTION_JSON_FILE", "data/subscriptions.json")
         
         if subscription_api_url and subscription_api_url.strip():
-            # Gọi API external
+            # Goi API external
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(subscription_api_url)
                 if response.status_code == 200:
                     subscription_data = response.json()
                     subscription_list = subscription_data if isinstance(subscription_data, list) else subscription_data.get("subscriptions", [])
                     
-                    # Lưu vào file JSON để dùng làm cache/fallback
+                    # Luu vao file JSON de dung lam cache/fallback
                     json_path = os.path.join(os.path.dirname(__file__), subscription_json_file)
                     os.makedirs(os.path.dirname(json_path), exist_ok=True)
                     with open(json_path, 'w', encoding='utf-8') as f:
                         json.dump(subscription_list, f, ensure_ascii=False, indent=2)
                     
-                    # Clear cache trong parking_manager để reload subscriptions
+                    # Clear cache trong parking_manager de reload subscriptions
                     global parking_manager
                     if parking_manager:
                         parking_manager._subscription_cache = None
@@ -1502,10 +1232,10 @@ async def get_subscriptions():
                         "source": "api"
                     })
                 else:
-                    # Nếu API lỗi, fallback về file JSON
+                    # Neu API loi, fallback ve file JSON
                     raise Exception(f"API returned status {response.status_code}")
         else:
-            # Đọc từ file JSON (fake data)
+            # Doc tu file JSON (fake data)
             json_path = os.path.join(os.path.dirname(__file__), subscription_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -1546,18 +1276,18 @@ async def update_subscriptions(request: Request):
                 "error": "Subscriptions must be a list"
             }, status_code=400)
         
-        # Lấy đường dẫn file JSON
+        # Lay duong dan file JSON
         subscription_json_file = getattr(config, "SUBSCRIPTION_JSON_FILE", "data/subscriptions.json")
         json_path = os.path.join(os.path.dirname(__file__), subscription_json_file)
         
-        # Tạo thư mục nếu chưa có
+        # Tao thu muc neu chua co
         os.makedirs(os.path.dirname(json_path), exist_ok=True)
         
-        # Ghi vào file JSON
+        # Ghi vao file JSON
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(subscription_list, f, ensure_ascii=False, indent=2)
         
-        # Clear cache trong parking_manager để reload subscriptions
+        # Clear cache trong parking_manager de reload subscriptions
         global parking_manager
         if parking_manager:
             parking_manager._subscription_cache = None
@@ -1583,19 +1313,19 @@ async def get_parking_fees():
     import os
     
     try:
-        # Nếu có PARKING_API_URL thì gọi API, nếu không thì đọc từ file JSON
+        # Neu co PARKING_API_URL thi goi API, neu khong thi doc tu file JSON
         parking_api_url = getattr(config, "PARKING_API_URL", "")
         parking_json_file = getattr(config, "PARKING_JSON_FILE", "data/parking_fees.json")
         
         if parking_api_url and parking_api_url.strip():
-            # Gọi API external
+            # Goi API external
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(parking_api_url)
                 if response.status_code == 200:
                     fees_data = response.json()
                     fees_dict = fees_data if isinstance(fees_data, dict) else fees_data.get("fees", {})
                     
-                    # Lưu vào file JSON để dùng làm cache/fallback
+                    # Luu vao file JSON de dung lam cache/fallback
                     json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
                     os.makedirs(os.path.dirname(json_path), exist_ok=True)
                     with open(json_path, 'w', encoding='utf-8') as f:
@@ -1607,10 +1337,10 @@ async def get_parking_fees():
                         "source": "api"
                     })
                 else:
-                    # Nếu API lỗi, fallback về file JSON
+                    # Neu API loi, fallback ve file JSON
                     raise Exception(f"API returned status {response.status_code}")
         else:
-            # Đọc từ file JSON (fake data)
+            # Doc tu file JSON (fake data)
             json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -1621,14 +1351,12 @@ async def get_parking_fees():
                     "source": "file"
                 })
             else:
-                # Trả về giá trị mặc định từ config
+                # Tra ve gia tri mac dinh tu config
                 return JSONResponse({
                     "success": True,
                     "fees": {
                         "fee_base": getattr(config, "FEE_BASE", 0.5),
-                        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000),
-                        "fee_overnight": getattr(config, "FEE_OVERNIGHT", 0),
-                        "fee_daily_max": getattr(config, "FEE_DAILY_MAX", 0)
+                        "fee_per_hour": getattr(config, "FEE_PER_HOUR", 25000)
                     },
                     "source": "default"
                 })
@@ -1658,14 +1386,14 @@ async def update_parking_fees(request: Request):
                 "error": "Fees must be a dict"
             }, status_code=400)
         
-        # Lấy đường dẫn file JSON
+        # Lay duong dan file JSON
         parking_json_file = getattr(config, "PARKING_JSON_FILE", "data/parking_fees.json")
         json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
         
-        # Tạo thư mục nếu chưa có
+        # Tao thu muc neu chua co
         os.makedirs(os.path.dirname(json_path), exist_ok=True)
         
-        # Ghi vào file JSON
+        # Ghi vao file JSON
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(fees_dict, f, ensure_ascii=False, indent=2)
         
@@ -1683,7 +1411,7 @@ async def update_parking_fees(request: Request):
         }, status_code=500)
 
 
-# Run Server 
+# Run Server
 if __name__ == '__main__':
     uvicorn.run(
         app,

@@ -28,7 +28,7 @@ import p2p_api
 import p2p_api_extensions
 import edge_api
 
-# FastAPI App 
+# FastAPI App
 app = FastAPI(title="Central Parking Management API")
 
 app.add_middleware(
@@ -39,7 +39,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global Instances 
+# Global Instances
 database = None
 parking_state = None
 camera_registry = None
@@ -104,9 +104,9 @@ def _clean_camera_data(cameras):
     for cam in cameras:
         cleaned_cam = {}
         for key, value in cam.items():
-            # Bỏ qua các field không cần thiết hoặc không serializable
+            # Bo qua cac field khong can thiet hoac khong serializable
             if key in ["last_heartbeat"] and value:
-                # Convert datetime string thành ISO format nếu cần
+                # Convert datetime string thanh ISO format neu can
                 cleaned_cam[key] = str(value) if value else None
             elif isinstance(value, (str, int, float, bool, type(None))):
                 cleaned_cam[key] = value
@@ -130,7 +130,7 @@ async def broadcast_camera_update():
             
         status = _enrich_camera_status(camera_registry.get_camera_status())
         
-        # Clean camera data để đảm bảo JSON serializable
+        # Clean camera data de dam bao JSON serializable
         cameras = _clean_camera_data(status.get("cameras", []))
 
         message = json.dumps({
@@ -204,35 +204,29 @@ def _build_control_proxy_info(camera_id: int) -> Dict[str, Any]:
 
     base = _sanitize_base_url(base_url)
     info_url = _compose_edge_endpoint(base, cfg.get("info_path", "/api/camera/info"))
-    open_barrier_url = _compose_edge_endpoint(
-        base, cfg.get("open_barrier_path", "/api/open-barrier")
-    )
-    barrier_status_url = _compose_edge_endpoint(base, "/api/barrier/status")
 
     return {
         "available": True,
         "base_url": base,
         "info_url": info_url,
-        "open_barrier_url": open_barrier_url,
-        "barrier_status_url": barrier_status_url,
         "ws_url": cfg.get("ws_url"),
     }
 
 
 def _enrich_camera_status(status: Dict[str, Any]) -> Dict[str, Any]:
     """Enrich camera status với config và thêm cameras từ config chưa có trong database"""
-    # Tạo dict cameras từ database để dễ lookup
+    # Tao dict cameras tu database de de lookup
     db_cameras = {c.get("id"): c for c in status.get("cameras", [])}
     
-    # Lấy tất cả camera IDs từ config
+    # Lay tat ca camera IDs tu config
     import config as config_module
     all_camera_ids = set(config_module.EDGE_CAMERAS.keys())
     
-    # Merge: cameras từ database + cameras từ config (chưa có trong database)
+    # Merge: cameras tu database + cameras tu config (chua co trong database)
     cameras = []
     processed_ids = set()
     
-    # Xử lý cameras từ database trước
+    # Xu ly cameras tu database truoc
     for camera in status.get("cameras", []):
         camera_id = camera.get("id")
         if camera_id is None:
@@ -246,55 +240,55 @@ def _enrich_camera_status(status: Dict[str, Any]) -> Dict[str, Any]:
         enriched["stream_proxy"] = stream_proxy
         enriched["control_proxy"] = control_proxy
         
-        # Merge tên camera từ EDGE_CAMERAS config (override tên từ database)
+        # Merge ten camera tu EDGE_CAMERAS config (override ten tu database)
         edge_config = _get_edge_camera_config(camera_id)
         if edge_config and edge_config.get("name"):
             enriched["name"] = edge_config["name"]
         if edge_config and edge_config.get("camera_type"):
             enriched["type"] = edge_config["camera_type"]
         
-        # Nếu camera không có config hoặc base_url không hợp lệ → đánh dấu offline ngay
+        # Neu camera khong co config hoac base_url khong hop le → danh dau offline ngay
         if not edge_config or not edge_config.get("base_url") or not edge_config.get("base_url").strip():
             enriched["status"] = "offline"
             enriched["config_missing"] = True
         elif not stream_proxy.get("available") or not control_proxy.get("available"):
-            # Nếu stream hoặc control proxy không available → IP sai hoặc không cấu hình
+            # Neu stream hoac control proxy khong available → IP sai hoac khong cau hinh
             enriched["status"] = "offline"
             enriched["config_invalid"] = True
         else:
-            # Nếu camera có config nhưng không nhận heartbeat gần đây (60s) → đánh dấu offline
+            # Neu camera co config nhung khong nhan heartbeat gan day (60s) → danh dau offline
             from datetime import datetime, timedelta, timezone
             if camera.get("last_heartbeat"):
                 try:
                     last_heartbeat = datetime.strptime(camera["last_heartbeat"], "%Y-%m-%d %H:%M:%S")
-                    # Database lưu UTC, nên dùng utcnow() thay vì now()
+                    # Database luu UTC, nen dung utcnow() thay vi now()
                     time_since_heartbeat = (datetime.utcnow() - last_heartbeat).total_seconds()
-                    # Nếu không nhận heartbeat trong 60 giây → đánh dấu offline
+                    # Neu khong nhan heartbeat trong 60 giay → danh dau offline
                     if time_since_heartbeat > 60:
                         enriched["status"] = "offline"
                         enriched["connection_lost"] = True
                     else:
-                        # Nhận heartbeat gần đây → online
+                        # Nhan heartbeat gan day → online
                         enriched["status"] = "online"
                 except Exception:
                     pass
         
         cameras.append(enriched)
     
-    # Thêm cameras từ config chưa có trong database (hiển thị offline)
+    # Them cameras tu config chua co trong database (hien thi offline)
     for camera_id in all_camera_ids:
-        # Normalize camera_id (có thể là int hoặc str từ config keys)
+        # Normalize camera_id (co the la int hoac str tu config keys)
         camera_id_int = int(camera_id) if isinstance(camera_id, str) else camera_id
         
-        # Kiểm tra xem camera đã được xử lý chưa (có trong database)
+        # Kiem tra xem camera da duoc xu ly chua (co trong database)
         if camera_id_int in processed_ids or camera_id in processed_ids:
-            continue  # Đã xử lý rồi
+            continue  # Da xu ly roi
         
         edge_config = _get_edge_camera_config(camera_id_int)
         if not edge_config:
             continue
         
-        # Tạo camera entry mặc định từ config
+        # Tao camera entry mac dinh tu config
         enriched = {
             "id": camera_id_int,
             "name": edge_config.get("name", f"Camera {camera_id_int}"),
@@ -313,7 +307,7 @@ def _enrich_camera_status(status: Dict[str, Any]) -> Dict[str, Any]:
         enriched["stream_proxy"] = stream_proxy
         enriched["control_proxy"] = control_proxy
         
-        # Nếu IP không hợp lệ hoặc không có config → đánh dấu offline
+        # Neu IP khong hop le hoac khong co config → danh dau offline
         if not edge_config.get("base_url") or not edge_config.get("base_url").strip():
             enriched["config_missing"] = True
         elif not stream_proxy.get("available") or not control_proxy.get("available"):
@@ -321,7 +315,7 @@ def _enrich_camera_status(status: Dict[str, Any]) -> Dict[str, Any]:
         
         cameras.append(enriched)
     
-    # Sắp xếp theo camera ID
+    # Sap xep theo camera ID
     cameras.sort(key=lambda x: x.get("id", 0))
     
     # Recalculate stats
@@ -370,13 +364,13 @@ async def _proxy_webrtc_offer(camera_id: int, payload: Dict[str, Any], annotated
         raise HTTPException(status_code=response.status_code, detail=data)
 
     return data
-# Startup & Shutdown 
+# Startup & Shutdown
 async def camera_broadcast_loop():
     """Background task để check và broadcast camera updates khi có thay đổi"""
     last_status = None
     while True:
         try:
-            await asyncio.sleep(2)  # Check mỗi 2 giây để phản ứng nhanh hơn
+            await asyncio.sleep(2)  # Check moi 2 giay de phan ung nhanh hon
             
             global camera_registry
             if not camera_registry:
@@ -385,13 +379,13 @@ async def camera_broadcast_loop():
             current_status = _enrich_camera_status(camera_registry.get_camera_status())
             cameras = current_status.get("cameras", [])
             
-            # So sánh với status trước để chỉ broadcast khi có thay đổi
+            # So sanh voi status truoc de chi broadcast khi co thay doi
             if last_status is None:
                 last_status = cameras
-                # Không broadcast lần đầu, chỉ set last_status
+                # Khong broadcast lan dau, chi set last_status
                 continue
             
-            # Check xem có thay đổi không
+            # Check xem co thay doi khong
             status_changed = False
             if len(cameras) != len(last_status):
                 status_changed = True
@@ -435,15 +429,15 @@ async def startup():
         )
         camera_registry.start()
 
-        # Tắt broadcast loop định kỳ - chỉ broadcast khi có thay đổi từ heartbeat
+        # Tat broadcast loop dinh ky - chi broadcast khi co thay doi tu heartbeat
         # asyncio.create_task(camera_broadcast_loop())
 
-        # Initialize P2P System 
-        print("🔄 Initializing P2P system...")
+        # Initialize P2P System
+        print("Initializing P2P system...")
 
         # Auto-detect and update Central IP if needed
         local_ip = get_local_ip()
-        print(f"🌐 Auto-detected local IP: {local_ip}")
+        print(f"Auto-detected local IP: {local_ip}")
 
         # Update P2P config if IP is "auto" or "127.0.0.1"
         import os
@@ -519,13 +513,13 @@ async def shutdown():
 
     # Stop P2P Manager
     if p2p_manager:
-        print("🔄 Stopping P2P system...")
+        print("Stopping P2P system...")
         await p2p_manager.stop()
         print("P2P system stopped")
 
 
 
-# Edge API (nhận events từ Edge cameras) 
+# Edge API (nhan events tu Edge cameras)
 
 @app.post("/api/edge/event")
 async def receive_edge_event(request: Request):
@@ -556,23 +550,56 @@ async def receive_edge_event(request: Request):
         camera_type = event.get('camera_type')
         data = event.get('data', {})
 
+        # Generate event_id for ENTRY/EXIT to track sync
+        event_id = None
+        if event_type in ["ENTRY", "DETECTION"]:
+            if p2p_broadcaster:
+                event_id = p2p_broadcaster.generate_event_id(
+                    data.get("plate_text", "UNKNOWN").replace(" ", "")
+                )
         # Process event
         result = parking_state.process_edge_event(
             event_type=event_type,
             camera_id=camera_id,
             camera_name=camera_name,
             camera_type=camera_type,
-            data=data
+            data=data,
+            event_id=event_id,
         )
 
         if result['success']:
-            # Clean result để đảm bảo JSON serializable (loại bỏ bytes, BLOB objects)
+            # Clean result de dam bao JSON serializable (loai bo bytes, BLOB objects)
             clean_result = {}
             for k, v in result.items():
-                # Skip bytes/BLOB và None
+                # Skip bytes/BLOB va None
                 if isinstance(v, bytes) or (k == 'plate_image' and v is not None):
                     continue
                 clean_result[k] = v
+
+            # Broadcast to P2P peers if available
+            if p2p_broadcaster and result.get('action'):
+                try:
+                    if result['action'] == 'ENTRY' and result.get('history_id'):
+                        asyncio.create_task(p2p_broadcaster.broadcast_entry_pending(
+                            event_id=result.get('event_id') or event_id,
+                            plate_id=result['plate_id'],
+                            plate_view=result['plate_view'],
+                            edge_id=camera_id,
+                            camera_type=camera_type,
+                            direction='ENTRY',
+                            entry_time=result['entry_time']
+                        ))
+
+                    elif result['action'] == 'EXIT' and result.get('history_id'):
+                        asyncio.create_task(p2p_broadcaster.broadcast_exit(
+                            event_id=result.get('event_id'),
+                            exit_edge=camera_id,
+                            exit_time=result.get('exit_time', ''),
+                            fee=result.get('fee', 0),
+                            duration=result.get('duration', '')
+                        ))
+                except Exception as e:
+                    print(f"Error broadcasting P2P event: {e}")
 
             # Broadcast to WebSocket clients for real-time update
             asyncio.create_task(broadcast_history_update({
@@ -586,8 +613,8 @@ async def receive_edge_event(request: Request):
             return JSONResponse({"success": True, **clean_result})
         else:
             error_msg = result.get('error', 'Unknown error')
-            # Vẫn log event vào database ngay cả khi failed để debug
-            # Clean result để đảm bảo JSON serializable
+            # Van log event vao database ngay ca khi failed de debug
+            # Clean result de dam bao JSON serializable
             clean_result = {}
             for k, v in result.items():
                 if isinstance(v, bytes) or (k == 'plate_image' and v is not None):
@@ -637,7 +664,7 @@ async def receive_heartbeat(request: Request):
             events_failed=events_failed
         )
 
-        # Broadcast camera update to WebSocket clients (ngay khi có heartbeat)
+        # Broadcast camera update to WebSocket clients (ngay khi co heartbeat)
         try:
             asyncio.create_task(broadcast_camera_update())
         except Exception as broadcast_err:
@@ -653,7 +680,7 @@ async def receive_heartbeat(request: Request):
         }, status_code=500)
 
 
-# Frontend API (cho Dashboard) 
+# Frontend API (cho Dashboard)
 
 @app.get("/")
 async def index():
@@ -844,12 +871,12 @@ async def get_staff():
     import os
     
     try:
-        # Nếu có STAFF_API_URL thì gọi API, nếu không thì đọc từ file JSON
+        # Neu co STAFF_API_URL thi goi API, neu khong thi doc tu file JSON
         staff_api_url = config_module.STAFF_API_URL
         staff_json_file = config_module.STAFF_JSON_FILE
         
         if staff_api_url and staff_api_url.strip():
-            # Gọi API external
+            # Goi API external
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(staff_api_url)
                 if response.status_code == 200:
@@ -860,10 +887,10 @@ async def get_staff():
                         "source": "api"
                     })
                 else:
-                    # Nếu API lỗi, fallback về file JSON
+                    # Neu API loi, fallback ve file JSON
                     raise Exception(f"API returned status {response.status_code}")
         else:
-            # Đọc từ file JSON
+            # Doc tu file JSON
             json_path = os.path.join(os.path.dirname(__file__), staff_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -905,14 +932,14 @@ async def update_staff(request: Request):
                 "error": "Staff must be a list"
             }, status_code=400)
         
-        # Lấy đường dẫn file JSON
+        # Lay duong dan file JSON
         staff_json_file = config_module.STAFF_JSON_FILE
         json_path = os.path.join(os.path.dirname(__file__), staff_json_file)
         
-        # Tạo thư mục nếu chưa có
+        # Tao thu muc neu chua co
         os.makedirs(os.path.dirname(json_path), exist_ok=True)
         
-        # Ghi vào file JSON
+        # Ghi vao file JSON
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(staff_list, f, ensure_ascii=False, indent=2)
         
@@ -937,12 +964,12 @@ async def get_subscriptions():
     import os
     
     try:
-        # Nếu có SUBSCRIPTION_API_URL thì gọi API, nếu không thì đọc từ file JSON
+        # Neu co SUBSCRIPTION_API_URL thi goi API, neu khong thi doc tu file JSON
         subscription_api_url = config_module.SUBSCRIPTION_API_URL
         subscription_json_file = config_module.SUBSCRIPTION_JSON_FILE
         
         if subscription_api_url and subscription_api_url.strip():
-            # Gọi API external
+            # Goi API external
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(subscription_api_url)
                 if response.status_code == 200:
@@ -953,10 +980,10 @@ async def get_subscriptions():
                         "source": "api"
                     })
                 else:
-                    # Nếu API lỗi, fallback về file JSON
+                    # Neu API loi, fallback ve file JSON
                     raise Exception(f"API returned status {response.status_code}")
         else:
-            # Đọc từ file JSON
+            # Doc tu file JSON
             json_path = os.path.join(os.path.dirname(__file__), subscription_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -998,14 +1025,14 @@ async def update_subscriptions(request: Request):
                 "error": "Subscriptions must be a list"
             }, status_code=400)
         
-        # Lấy đường dẫn file JSON
+        # Lay duong dan file JSON
         subscription_json_file = config_module.SUBSCRIPTION_JSON_FILE
         json_path = os.path.join(os.path.dirname(__file__), subscription_json_file)
         
-        # Tạo thư mục nếu chưa có
+        # Tao thu muc neu chua co
         os.makedirs(os.path.dirname(json_path), exist_ok=True)
         
-        # Ghi vào file JSON
+        # Ghi vao file JSON
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(subscription_list, f, ensure_ascii=False, indent=2)
         
@@ -1030,19 +1057,19 @@ async def get_parking_fees():
     import os
     
     try:
-        # Nếu có PARKING_API_URL thì gọi API, nếu không thì đọc từ file JSON
+        # Neu co PARKING_API_URL thi goi API, neu khong thi doc tu file JSON
         parking_api_url = config_module.PARKING_API_URL
         parking_json_file = config_module.PARKING_JSON_FILE
         
         if parking_api_url and parking_api_url.strip():
-            # Gọi API external
+            # Goi API external
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(parking_api_url)
                 if response.status_code == 200:
                     fees_data = response.json()
                     fees_dict = fees_data if isinstance(fees_data, dict) else fees_data.get("fees", {})
                     
-                    # Lưu vào file JSON để dùng làm cache/fallback
+                    # Luu vao file JSON de dung lam cache/fallback
                     json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
                     os.makedirs(os.path.dirname(json_path), exist_ok=True)
                     with open(json_path, 'w', encoding='utf-8') as f:
@@ -1054,10 +1081,10 @@ async def get_parking_fees():
                         "source": "api"
                     })
                 else:
-                    # Nếu API lỗi, fallback về file JSON
+                    # Neu API loi, fallback ve file JSON
                     raise Exception(f"API returned status {response.status_code}")
         else:
-            # Đọc từ file JSON (fake data)
+            # Doc tu file JSON (fake data)
             json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
             if os.path.exists(json_path):
                 with open(json_path, 'r', encoding='utf-8') as f:
@@ -1068,14 +1095,12 @@ async def get_parking_fees():
                     "source": "file"
                 })
             else:
-                # Trả về giá trị mặc định từ config
+                # Tra ve gia tri mac dinh tu config
                 return JSONResponse({
                     "success": True,
                     "fees": {
                         "fee_base": getattr(config_module, "FEE_BASE", 0.5),
-                        "fee_per_hour": getattr(config_module, "FEE_PER_HOUR", 25000),
-                        "fee_overnight": getattr(config_module, "FEE_OVERNIGHT", 0),
-                        "fee_daily_max": getattr(config_module, "FEE_DAILY_MAX", 0)
+                        "fee_per_hour": getattr(config_module, "FEE_PER_HOUR", 25000)
                     },
                     "source": "default"
                 })
@@ -1106,14 +1131,14 @@ async def update_parking_fees(request: Request):
                 "error": "Fees must be a dict"
             }, status_code=400)
         
-        # Lấy đường dẫn file JSON
+        # Lay duong dan file JSON
         parking_json_file = config_module.PARKING_JSON_FILE
         json_path = os.path.join(os.path.dirname(__file__), parking_json_file)
         
-        # Tạo thư mục nếu chưa có
+        # Tao thu muc neu chua co
         os.makedirs(os.path.dirname(json_path), exist_ok=True)
         
-        # Ghi vào file JSON
+        # Ghi vao file JSON
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(fees_dict, f, ensure_ascii=False, indent=2)
         
@@ -1164,23 +1189,23 @@ async def update_config(request: Request):
                 "error": "Failed to update configuration"
             }, status_code=500)
 
-        # Reload config module để áp dụng thay đổi ngay lập tức
+        # Reload config module de ap dung thay doi ngay lap tuc
         import importlib
         import sys
-        # Remove module from cache và reload
+        # Remove module from cache va reload
         if 'config' in sys.modules:
             del sys.modules['config']
-        import config  # Re-import sau khi xóa cache
+        import config  # Re-import sau khi xoa cache
         importlib.reload(config)
         
-        # Debug: Kiểm tra số lượng cameras sau khi reload
+        # Debug: Kiem tra so luong cameras sau khi reload
         print(f"[Config Update] Cameras sau khi reload: {list(config.EDGE_CAMERAS.keys())}")
         
         # Sync config to edge backends via /api/config
         sync_results = []
         if "edge_cameras" in new_config:
             import httpx
-            # Lấy IP của Central server
+            # Lay IP cua Central server
             central_ip = get_local_ip()
             central_url = f"http://{central_ip}:{config.SERVER_PORT}"
 
@@ -1205,7 +1230,7 @@ async def update_config(request: Request):
                             response = await client.post(config_url, json=sync_payload)
 
                             if response.status_code == 200:
-                                # 2. Khởi tạo sync với Central (bật heartbeat)
+                                # 2. Khoi tao sync voi Central (bat heartbeat)
                                 init_url = f"http://{ip}:5000/api/edge/init-sync"
                                 init_payload = {
                                     "central_url": central_url,
@@ -1239,8 +1264,8 @@ async def update_config(request: Request):
                             "error": str(e)
                         })
 
-        # Broadcast camera update để frontend nhận camera mới ngay lập tức
-        # Sử dụng await để đảm bảo broadcast được gửi đi
+        # Broadcast camera update de frontend nhan camera moi ngay lap tuc
+        # Su dung await de dam bao broadcast duoc gui di
         print("[Config Update] Broadcasting camera update...")
         await broadcast_camera_update()
         print("[Config Update] Broadcast completed")
@@ -1257,7 +1282,7 @@ async def update_config(request: Request):
         }, status_code=500)
 
 
-# Edge Config Sync 
+# Edge Config Sync
 
 @app.post("/api/edge/sync-config")
 async def sync_edge_config(request: Request):
@@ -1270,7 +1295,7 @@ async def sync_edge_config(request: Request):
     try:
         edge_config = await request.json()
         
-        # Lấy thông tin edge_cameras từ request
+        # Lay thong tin edge_cameras tu request
         if "edge_cameras" not in edge_config:
             return JSONResponse({
                 "success": False,
@@ -1279,11 +1304,11 @@ async def sync_edge_config(request: Request):
         
         edge_cameras = edge_config["edge_cameras"]
         
-        # Lấy config hiện tại
+        # Lay config hien tai
         current_config = config_manager.get_config()
         current_edge_cameras = current_config.get("edge_cameras", {})
         
-        # Cập nhật hoặc thêm camera edge
+        # Cap nhat hoac them camera edge
         updated = False
         for cam_id, cam_config in edge_cameras.items():
             cam_id_int = int(cam_id) if isinstance(cam_id, str) else cam_id
@@ -1294,20 +1319,20 @@ async def sync_edge_config(request: Request):
             if not edge_ip:
                 continue
             
-            # Kiểm tra xem camera đã tồn tại chưa
+            # Kiem tra xem camera da ton tai chua
             camera_exists = cam_id_int in current_edge_cameras or str(cam_id_int) in current_edge_cameras
             
             if not camera_exists:
-                # Thêm camera mới vào config
+                # Them camera moi vao config
                 print(f"[Edge Sync] Thêm camera edge mới: {cam_id_int} ({edge_name}) từ {edge_ip}")
             else:
-                # Cập nhật camera hiện có
+                # Cap nhat camera hien co
                 current_cam = current_edge_cameras.get(cam_id_int) or current_edge_cameras.get(str(cam_id_int))
                 if current_cam:
                     if current_cam.get("name") != edge_name or current_cam.get("camera_type") != edge_type:
-                        print(f"🔄 [Edge Sync] Cập nhật camera edge: {cam_id_int} ({edge_name})")
+                        print(f"[Edge Sync] Cập nhật camera edge: {cam_id_int} ({edge_name})")
             
-            # Cập nhật config
+            # Cap nhat config
             current_edge_cameras[cam_id_int] = {
                 "name": edge_name,
                 "ip": edge_ip,
@@ -1316,7 +1341,7 @@ async def sync_edge_config(request: Request):
             updated = True
         
         if updated:
-            # Lưu config mới
+            # Luu config moi
             update_config_data = {
                 "edge_cameras": current_edge_cameras
             }
@@ -1358,7 +1383,7 @@ async def sync_edge_config(request: Request):
         }, status_code=500)
 
 
-# P2P API Routes 
+# P2P API Routes
 
 # Include P2P API router
 app.include_router(p2p_api.router)
@@ -1373,7 +1398,7 @@ async def get_p2p_sync_state():
     return p2p_api_extensions.get_sync_state_endpoint()
 
 
-# WebRTC Proxy 
+# WebRTC Proxy
 
 @app.post("/api/cameras/{camera_id}/offer")
 async def proxy_camera_offer(camera_id: int, request: Request, annotated: bool = False):
@@ -1391,7 +1416,7 @@ async def proxy_camera_offer_annotated(camera_id: int, request: Request):
     return JSONResponse(data)
 
 
-# MJPEG Stream Proxy (for Desktop App) 
+# MJPEG Stream Proxy (for Desktop App)
 
 @app.get("/api/stream/raw")
 async def proxy_mjpeg_stream_raw(camera_id: int = Query(default=1)):
@@ -1427,7 +1452,7 @@ async def proxy_mjpeg_stream_raw(camera_id: int = Query(default=1)):
 
     stream_url = f"{edge_url}/api/stream/raw"
 
-    # Proxy stream từ Edge
+    # Proxy stream tu Edge
     async def stream_generator():
         async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream("GET", stream_url) as response:
@@ -1474,7 +1499,7 @@ async def proxy_mjpeg_stream_annotated(camera_id: int = Query(default=1)):
 
     stream_url = f"{edge_url}/api/stream/annotated"
 
-    # Proxy stream từ Edge
+    # Proxy stream tu Edge
     async def stream_generator():
         async with httpx.AsyncClient(timeout=30.0) as client:
             async with client.stream("GET", stream_url) as response:
@@ -1535,7 +1560,7 @@ async def websocket_camera_updates(websocket: WebSocket):
         # Keep connection alive with ping/pong
         while True:
             try:
-                # Wait for messages with timeout để có thể send ping
+                # Wait for messages with timeout de co the send ping
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
                 
                 # Handle ping/pong
@@ -1545,7 +1570,7 @@ async def websocket_camera_updates(websocket: WebSocket):
                     pass  # Just acknowledge
                     
             except asyncio.TimeoutError:
-                # Send ping để keep connection alive (mỗi 30 giây)
+                # Send ping de keep connection alive (moi 30 giay)
                 try:
                     await websocket.send_text("ping")
                 except Exception as e:
@@ -1562,7 +1587,58 @@ async def websocket_camera_updates(websocket: WebSocket):
         camera_websocket_clients.discard(websocket)
 
 
-# Run Server 
+@app.websocket("/ws/p2p")
+async def websocket_p2p_connection(websocket: WebSocket):
+    """
+    WebSocket endpoint for P2P communication between central servers
+    Runs on same port as HTTP API (8000) instead of separate port (9000)
+    """
+    await websocket.accept()
+
+    peer_id = None
+    try:
+        # Wait for identification message from peer
+        data = await websocket.receive_json()
+        peer_id = data.get("peer_id")
+
+        if not peer_id:
+            await websocket.close(code=1008, reason="No peer_id provided")
+            return
+
+        print(f"[P2P WebSocket] Peer '{peer_id}' connected")
+
+        # Register this WebSocket connection with P2P manager
+        if p2p_manager:
+            p2p_manager.register_websocket_connection(peer_id, websocket)
+
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                message = await websocket.receive_json()
+
+                # Forward message to P2P manager for processing
+                if p2p_manager:
+                    await p2p_manager.handle_websocket_message(peer_id, message)
+
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                print(f"[P2P WebSocket] Error processing message from {peer_id}: {e}")
+                break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        import traceback
+        print(f"[P2P WebSocket] Connection error: {e}")
+        traceback.print_exc()
+    finally:
+        if peer_id and p2p_manager:
+            p2p_manager.unregister_websocket_connection(peer_id)
+        print(f"[P2P WebSocket] Peer '{peer_id}' disconnected")
+
+
+# Run Server
 if __name__ == '__main__':
     uvicorn.run(
         app,

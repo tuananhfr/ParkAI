@@ -50,8 +50,8 @@ class P2PSyncManager:
                 if result:
                     return result[0]
                 else:
-                    # Chưa có record → lần đầu sync
-                    # Return timestamp 7 days ago (sync 7 ngày gần nhất)
+                    # Chua co record → lan dau sync
+                    # Return timestamp 7 days ago (sync 7 ngay gan nhat)
                     from datetime import timedelta
                     week_ago = datetime.now() - timedelta(days=7)
                     return int(week_ago.timestamp() * 1000)
@@ -99,7 +99,7 @@ class P2PSyncManager:
         try:
             last_sync = self.get_last_sync_timestamp(peer_id)
 
-            print(f"🔄 Requesting sync from {peer_id} (since {last_sync})")
+            print(f"Requesting sync from {peer_id} (since {last_sync})")
 
             message = create_sync_request_message(
                 source_central=self.central_id,
@@ -132,7 +132,7 @@ class P2PSyncManager:
         try:
             since_timestamp = message.data.get("since_timestamp", 0)
 
-            print(f"📥 Received SYNC_REQUEST from {from_peer_id} (since {since_timestamp})")
+            print(f"Received SYNC_REQUEST from {from_peer_id} (since {since_timestamp})")
 
             # Get events since timestamp
             events = self.db.get_events_since(since_timestamp, limit=5000)
@@ -148,7 +148,7 @@ class P2PSyncManager:
 
                 serialized_events.append(clean_event)
 
-            print(f"📤 Sending {len(serialized_events)} events to {from_peer_id}")
+            print(f"Sending {len(serialized_events)} events to {from_peer_id}")
 
             # Send SYNC_RESPONSE
             response = create_sync_response_message(
@@ -179,10 +179,10 @@ class P2PSyncManager:
         try:
             events = message.data.get("events", [])
 
-            print(f"📥 Received SYNC_RESPONSE from {from_peer_id}: {len(events)} events")
+            print(f"Received SYNC_RESPONSE from {from_peer_id}: {len(events)} events")
 
             if not events:
-                print(f"ℹ️ No missed events from {from_peer_id}")
+                print(f"No missed events from {from_peer_id}")
                 # Update sync timestamp to now
                 now_ms = int(datetime.now().timestamp() * 1000)
                 self.update_last_sync_timestamp(from_peer_id, now_ms)
@@ -261,7 +261,7 @@ class P2PSyncManager:
 
         Automatically request sync
         """
-        print(f"🔗 Peer {peer_id} connected, requesting sync...")
+        print(f"Peer {peer_id} connected, requesting sync...")
         await self.request_sync_from_peer(peer_id)
 
     async def on_peer_disconnected(self, peer_id: str):
@@ -270,7 +270,7 @@ class P2PSyncManager:
 
         Update last known timestamp
         """
-        # Update last sync timestamp to now (để lần sau chỉ sync từ thời điểm này)
+        # Update last sync timestamp to now (de lan sau chi sync tu thoi diem nay)
         now_ms = int(datetime.now().timestamp() * 1000)
         self.update_last_sync_timestamp(peer_id, now_ms)
-        print(f"🔌 Peer {peer_id} disconnected, saved sync timestamp")
+        print(f"Peer {peer_id} disconnected, saved sync timestamp")

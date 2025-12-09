@@ -16,7 +16,7 @@ class P2PServer:
     def __init__(self, host: str, port: int, on_message: Callable):
         self.host = host
         self.port = port
-        self.on_message = on_message  # Callback khi nhận message từ peer
+        self.on_message = on_message  # Callback khi nhan message tu peer
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.server = None
         self.running = False
@@ -57,7 +57,7 @@ class P2PServer:
     async def _handle_client(self, websocket: websockets.WebSocketServerProtocol, path: str):
         """Handle incoming client connection"""
         peer_address = websocket.remote_address
-        print(f"🔗 P2P peer connected: {peer_address}")
+        print(f"P2P peer connected: {peer_address}")
 
         self.clients.add(websocket)
 
@@ -66,7 +66,7 @@ class P2PServer:
                 await self._process_message(message, websocket)
 
         except websockets.exceptions.ConnectionClosed:
-            print(f"🔌 P2P peer disconnected: {peer_address}")
+            print(f"P2P peer disconnected: {peer_address}")
 
         except Exception as e:
             print(f"Error handling P2P client {peer_address}: {e}")

@@ -39,15 +39,15 @@ class P2PEventHandler:
             edge_id = data.get("edge_id")
             entry_time = data.get("entry_time")
 
-            # Check duplicate - nếu đã có event_id này rồi thì skip
+            # Check duplicate - neu da co event_id nay roi thi skip
             if self._event_exists(event_id):
                 print(f"Event {event_id} already exists, skipping")
                 return
 
-            # Check conflict - nếu xe này đã vào từ central khác
+            # Check conflict - neu xe nay da vao tu central khac
             existing = self.db.find_vehicle_in_parking(plate_id)
             if existing:
-                # Conflict detected - so sánh timestamp
+                # Conflict detected - so sanh timestamp
                 await self._resolve_conflict(existing, message)
                 return
 
@@ -59,9 +59,9 @@ class P2PEventHandler:
                 plate_id=plate_id,
                 plate_view=plate_view,
                 entry_time=entry_time,
-                camera_id=None,  # Edge camera, không có camera_id của central
+                camera_id=None,  # Edge camera, khong co camera_id cua central
                 camera_name=f"{source_central}/{edge_id}",
-                confidence=0.0,  # Unknown từ remote
+                confidence=0.0,  # Unknown tu remote
                 source="p2p_sync"
             )
 
@@ -85,10 +85,9 @@ class P2PEventHandler:
             confirmed_time = message.data.get("confirmed_time")
 
             # Update entry status to CONFIRMED
-            # (Trong design hiện tại, PENDING và CONFIRMED đều là status='IN')
-            # Nếu cần phân biệt, có thể thêm column 'barrier_status'
+            # (Trong design hien tai, PENDING va CONFIRMED deu la status='IN')
 
-            # Hiện tại chỉ log
+            # Hien tai chi log
             print(f"Entry {event_id} confirmed at {confirmed_time}")
 
         except Exception as e:
@@ -150,12 +149,12 @@ class P2PEventHandler:
             new_event_id = new_message.event_id
 
             if not existing_event_id:
-                # Entry cũ không có event_id (tạo trước khi có P2P)
-                # Giữ entry cũ
+                # Entry cu khong co event_id (tao truoc khi co P2P)
+                # Giu entry cu
                 print(f"Conflict: Keeping old entry (no event_id)")
                 return
 
-            # Parse timestamp từ event_id (format: central-1_timestamp_plate_id)
+            # Parse timestamp tu event_id (format: central-1_timestamp_plate_id)
             existing_timestamp = self._parse_timestamp_from_event_id(existing_event_id)
             new_timestamp = self._parse_timestamp_from_event_id(new_event_id)
 
@@ -164,8 +163,8 @@ class P2PEventHandler:
                 return
 
             if new_timestamp < existing_timestamp:
-                # Event mới CŨ HƠN → xóa entry hiện tại, insert entry mới
-                print(f"🔄 Conflict: New entry is older, replacing local entry")
+                # Event moi CU HON → xoa entry hien tai, insert entry moi
+                print(f"Conflict: New entry is older, replacing local entry")
                 print(f"   Old: {existing_event_id} (ts={existing_timestamp})")
                 print(f"   New: {new_event_id} (ts={new_timestamp})")
 
@@ -190,7 +189,7 @@ class P2PEventHandler:
                 print(f"Replaced with older entry from {new_message.source_central}")
 
             else:
-                # Entry hiện tại CŨ HƠN → giữ nguyên, ignore message mới
+                # Entry hien tai CU HON → giu nguyen, ignore message moi
                 print(f"Conflict: Local entry is older, ignoring new entry")
                 print(f"   Local: {existing_event_id} (ts={existing_timestamp})")
                 print(f"   Remote: {new_event_id} (ts={new_timestamp})")
