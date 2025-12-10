@@ -4,6 +4,7 @@ P2P Event Handler - Xử lý events nhận từ peer centrals
 from typing import Optional
 from datetime import datetime
 import traceback
+import asyncio
 
 from .protocol import P2PMessage, MessageType
 
@@ -11,9 +12,13 @@ from .protocol import P2PMessage, MessageType
 class P2PEventHandler:
     """Handler cho P2P events"""
 
-    def __init__(self, database, this_central_id: str):
+    def __init__(self, database, this_central_id: str, on_history_update=None, on_edge_broadcast=None):
         self.db = database
         self.this_central_id = this_central_id
+        # Callback async (vd: broadcast_history_update) để bắn WebSocket cho UI
+        self.on_history_update = on_history_update
+        # Callback async để broadcast events xuống Edge backends
+        self.on_edge_broadcast = on_edge_broadcast
 
     async def handle_vehicle_entry_pending(self, message: P2PMessage):
         """
@@ -66,6 +71,33 @@ class P2PEventHandler:
             )
 
             print(f"Synced ENTRY from {source_central}: {plate_view} ({event_id})")
+
+            await self._emit_history_update({
+                "type": "p2p_entry_synced",
+                "event_id": event_id,
+                "source_central": source_central,
+                "edge_id": edge_id,
+                "plate_id": plate_id,
+                "direction": "ENTRY",
+                "entry_time": entry_time,
+            })
+
+            # Broadcast to Edge backends
+            await self._broadcast_to_edges({
+                "type": "ENTRY",
+                "event_id": event_id,
+                "source_central": source_central,
+                "camera_id": edge_id,
+                "camera_name": f"{source_central}/{edge_id}",
+                "camera_type": data.get("camera_type", "ENTRY"),
+                "data": {
+                    "plate_text": plate_id,
+                    "plate_view": plate_view,
+                    "confidence": 0.0,
+                    "source": "p2p_sync"
+                },
+                "entry_time": entry_time,
+            })
 
         except Exception as e:
             print(f"Error handling VEHICLE_ENTRY_PENDING: {e}")
@@ -131,6 +163,30 @@ class P2PEventHandler:
 
             if success:
                 print(f"Synced EXIT from {exit_central}: event {event_id}, fee {fee}")
+                await self._emit_history_update({
+                    "type": "p2p_exit_synced",
+                    "event_id": event_id,
+                    "exit_central": exit_central,
+                    "exit_edge": exit_edge,
+                    "exit_time": exit_time,
+                    "fee": fee,
+                })
+
+                # Broadcast to Edge backends
+                await self._broadcast_to_edges({
+                    "type": "EXIT",
+                    "event_id": event_id,
+                    "source_central": exit_central,
+                    "camera_id": exit_edge,
+                    "camera_name": f"{exit_central}/{exit_edge}",
+                    "camera_type": "EXIT",
+                    "data": {
+                        "source": "p2p_sync"
+                    },
+                    "exit_time": exit_time,
+                    "fee": fee,
+                    "duration": duration,
+                })
             else:
                 print(f"Failed to update exit for event {event_id} - entry not found")
 
@@ -187,6 +243,14 @@ class P2PEventHandler:
                 )
 
                 print(f"Replaced with older entry from {new_message.source_central}")
+                await self._emit_history_update({
+                    "type": "p2p_entry_replaced",
+                    "event_id": new_event_id,
+                    "source_central": new_message.source_central,
+                    "edge_id": data.get("edge_id"),
+                    "plate_id": data.get("plate_id"),
+                    "entry_time": data.get("entry_time"),
+                })
 
             else:
                 # Entry hien tai CU HON → giu nguyen, ignore message moi
@@ -216,3 +280,90 @@ class P2PEventHandler:
             return None
         except:
             return None
+
+    async def handle_history_update(self, message: P2PMessage):
+        """
+        Handle HISTORY_UPDATE từ P2P peer (admin sửa record)
+        """
+        try:
+            source_central = message.source_central
+            data = message.data
+            history_id = data.get("history_id")
+            plate_text = data.get("plate_text")
+            plate_view = data.get("plate_view")
+
+            print(f"[P2P] Received HISTORY_UPDATE from {source_central}: record {history_id}")
+
+            # Update local DB
+            if self.db.update_history_entry(history_id, plate_text, plate_view):
+                print(f"[P2P] Updated record {history_id} in local DB")
+
+                # Broadcast to frontend
+                await self._emit_history_update({"type": "updated", "history_id": history_id})
+
+                # Broadcast to Edges
+                await self._broadcast_to_edges({
+                    "type": "UPDATE",
+                    "history_id": history_id,
+                    "data": {
+                        "plate_text": plate_text,
+                        "plate_view": plate_view
+                    }
+                })
+            else:
+                print(f"[P2P] Failed to update record {history_id}")
+
+        except Exception as e:
+            print(f"Error handling HISTORY_UPDATE: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def handle_history_delete(self, message: P2PMessage):
+        """
+        Handle HISTORY_DELETE từ P2P peer (admin xóa record)
+        """
+        try:
+            source_central = message.source_central
+            data = message.data
+            history_id = data.get("history_id")
+
+            print(f"[P2P] Received HISTORY_DELETE from {source_central}: record {history_id}")
+
+            # Delete from local DB
+            if self.db.delete_history_entry(history_id):
+                print(f"[P2P] Deleted record {history_id} from local DB")
+
+                # Broadcast to frontend
+                await self._emit_history_update({"type": "deleted", "history_id": history_id})
+
+                # Broadcast to Edges
+                await self._broadcast_to_edges({
+                    "type": "DELETE",
+                    "history_id": history_id
+                })
+            else:
+                print(f"[P2P] Failed to delete record {history_id}")
+
+        except Exception as e:
+            print(f"Error handling HISTORY_DELETE: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def _emit_history_update(self, payload: dict):
+        """Gửi tín hiệu history_update cho WebSocket UI khi có sync từ P2P."""
+        if not self.on_history_update:
+            return
+        try:
+            asyncio.create_task(self.on_history_update(payload))
+        except Exception as e:
+            print(f"Error emitting history update: {e}")
+
+    async def _broadcast_to_edges(self, event: dict):
+        """Broadcast event to all connected Edge backends"""
+        if not self.on_edge_broadcast:
+            return
+        try:
+            await self.on_edge_broadcast(event)
+        except Exception as e:
+            print(f"Error broadcasting to edges: {e}")
+            traceback.print_exc()

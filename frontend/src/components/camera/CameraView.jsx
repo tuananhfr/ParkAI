@@ -576,21 +576,20 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     userEditedRef.current = true;
     setPlateSource("manual");
 
-    // Gửi lưu entry thủ công lên backend
+    // Gửi lưu entry thủ công TRỰC TIẾP ĐẾN EDGE (không qua Central!)
+    // Kiến trúc: Frontend → Edge API → Edge lưu DB → Edge sync to Central
+    // Lợi ích: Nếu Central down, Edge vẫn hoạt động bình thường
     try {
-      const resp = await fetch(`${CENTRAL_URL}/api/edge/event`, {
+      // Lấy Edge URL từ control_proxy (mỗi camera có URL riêng)
+      const edgeUrl = controlProxy?.base_url || CENTRAL_URL;
+
+      const resp = await fetch(`${edgeUrl}/api/parking/manual-entry`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          type: "ENTRY",
-          camera_id: cameraInfo?.id,
-          camera_name: cameraInfo?.name,
-          camera_type: cameraInfo?.type,
-          data: {
-            plate_text: normalizedPlate,
-            confidence: 1.0,
-            source: "manual",
-          },
+          plate_text: normalizedPlate,
+          camera_type: cameraInfo?.type || "ENTRY",
+          // Không cần camera_id vì Edge biết camera của nó
         }),
       });
 

@@ -225,12 +225,13 @@ class ParkingManager:
         return clean_text, display_text
 
     def process_entry(self, plate_text, camera_id, camera_type, camera_name,
-                     confidence=0.0, source="manual"):
+                     confidence=0.0, source="manual", event_id=None):
         """
         Xử lý entry từ camera
 
         Args:
             camera_type: "ENTRY" | "EXIT"
+            event_id: Event ID cho deduplication (optional, sẽ tạo tự động nếu None)
         """
         plate_id, display_text = self.validate_plate(plate_text)
 
@@ -245,7 +246,7 @@ class ParkingManager:
         if camera_type == "ENTRY":
             return self._process_entry(
                 plate_id, display_text, camera_id, camera_name,
-                confidence, source
+                confidence, source, event_id
             )
         elif camera_type == "EXIT":
             return self._process_exit(
@@ -259,10 +260,18 @@ class ParkingManager:
             }
 
     def _process_entry(self, plate_id, display_text, camera_id, camera_name,
-                      confidence, source):
+                      confidence, source, event_id=None):
         """Xử lý xe VÀO"""
 
-        # Check duplicate
+        # Check duplicate by event_id first (nếu có)
+        if event_id and self.db.event_exists(event_id):
+            return {
+                "success": False,
+                "error": f"Event {event_id} đã tồn tại (duplicate)",
+                "duplicate": True
+            }
+
+        # Check duplicate by plate
         existing = self.db.find_entry_in(plate_id)
         if existing:
             return {
@@ -271,23 +280,41 @@ class ParkingManager:
                 "existing_entry": existing
             }
 
-        # Them vao DB
-        entry_id = self.db.add_entry(
-            plate_id=plate_id,
-            plate_view=display_text,
-            camera_id=camera_id,
-            camera_name=camera_name,
-            confidence=confidence,
-            source=source,
-            status="IN"
-        )
+        entry_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Lưu vào DB với event_id (nếu có)
+        if event_id:
+            entry_id = self.db.add_entry_with_event_id(
+                event_id=event_id,
+                plate_id=plate_id,
+                plate_view=display_text,
+                entry_time=entry_time,
+                camera_id=camera_id,
+                camera_name=camera_name,
+                confidence=confidence,
+                source=source,
+                status="IN"
+            )
+        else:
+            # Fallback: không có event_id (backward compatibility)
+            entry_id = self.db.add_entry(
+                plate_id=plate_id,
+                plate_view=display_text,
+                camera_id=camera_id,
+                camera_name=camera_name,
+                confidence=confidence,
+                source=source,
+                status="IN"
+            )
 
         return {
             "success": True,
             "action": "ENTRY",
             "entry_id": entry_id,
+            "event_id": event_id,  # Trả về event_id để sync
             "plate": display_text,
+            "plate_id": plate_id,
+            "entry_time": entry_time,
             "message": f"Xe {display_text} VÀO tại {camera_name}"
         }
 
@@ -339,6 +366,7 @@ class ParkingManager:
             "action": "EXIT",
             "entry_id": entry['id'],
             "plate": display_text,
+            "plate_id": plate_id,
             "entry_time": entry['entry_time'],
             "duration": duration,
             "fee": fee,
@@ -416,3 +444,42 @@ class ParkingManager:
     def get_stats(self):
         """Thống kê"""
         return self.db.get_stats()
+
+    # ===== Methods for Central Sync =====
+
+    def event_exists(self, event_id: str) -> bool:
+        """Check if event_id already exists in database"""
+        return self.db.event_exists(event_id)
+
+    def add_entry_from_sync(self, event_id: str, plate_id: str, plate_view: str, entry_time: str, source: str):
+        """
+        Add entry from central sync (from other nodes)
+        Similar to add_entry but with event_id for deduplication
+        """
+        return self.db.add_entry_with_event_id(
+            event_id=event_id,
+            plate_id=plate_id,
+            plate_view=plate_view,
+            entry_time=entry_time,
+            camera_id=None,  # Remote event, no local camera
+            camera_name="Remote",
+            confidence=0.0,
+            source=source,
+            status="IN"
+        )
+
+    def update_exit_from_sync(self, event_id: str, exit_time: str, fee: int, duration: str, source: str):
+        """
+        Update exit from central sync (from other nodes)
+        Find entry by event_id and update exit info
+        """
+        return self.db.update_exit_by_event_id(
+            event_id=event_id,
+            exit_time=exit_time,
+            camera_id=None,
+            camera_name="Remote",
+            confidence=0.0,
+            source=source,
+            duration=duration,
+            fee=fee
+        )

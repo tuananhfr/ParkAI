@@ -6,8 +6,9 @@ import { validatePlateNumber } from "@/utils/plateValidation";
  */
 const PlateInput = ({
   plateText,
-
+  plateSource,
   onPlateConfirm,
+  onPlateChange,
 }) => {
   const [inputValue, setInputValue] = useState(plateText || "");
   const [isEditing, setIsEditing] = useState(false);

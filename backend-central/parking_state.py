@@ -111,6 +111,17 @@ class ParkingStateManager:
 
     def _process_entry(self, plate_id, plate_view, camera_id, camera_name, confidence, source, event_id=None, edge_id=None):
         """Process vehicle entry"""
+        # Chống lặp: nếu xe đang IN chưa ra thì không thêm bản ghi mới
+        existing = self.db.find_vehicle_in_parking(plate_id)
+        if existing:
+            return {
+                "success": False,
+                "error": f"Xe {plate_view} đã ở trong bãi (vào lúc {existing.get('entry_time')})",
+                "already_inside": True,
+                "entry_time": existing.get("entry_time"),
+                "event_id": existing.get("event_id"),
+            }
+
         # Add entry
         entry_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         try:

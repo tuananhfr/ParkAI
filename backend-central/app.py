@@ -57,6 +57,9 @@ history_websocket_clients: Set[WebSocket] = set()
 # WebSocket connections for real-time camera updates
 camera_websocket_clients: Set[WebSocket] = set()
 
+# WebSocket connections for Edge backends (edge_id -> WebSocket)
+edge_websocket_connections: Dict[str, WebSocket] = {}
+
 
 def get_local_ip() -> str:
     """
@@ -76,7 +79,7 @@ def get_local_ip() -> str:
 
 
 async def broadcast_history_update(event_data: dict):
-    """Broadcast history update to all connected WebSocket clients"""
+    """Broadcast history update to all connected WebSocket clients (Frontend)"""
     if not history_websocket_clients:
         return
 
@@ -96,6 +99,42 @@ async def broadcast_history_update(event_data: dict):
     # Remove disconnected clients
     for client in disconnected:
         history_websocket_clients.discard(client)
+
+
+async def sync_event_to_edges_and_frontend(event_data: dict):
+    """
+    Broadcast event to both Edge backends and Frontend WebSocket clients
+    Called whenever Central receives/creates new data that needs to be synced
+    """
+    # Broadcast to frontend WebSocket clients
+    await broadcast_history_update(event_data)
+
+    # Broadcast to Edge backends for DB sync
+    if event_data.get("event_id"):
+        # Convert to Edge-compatible format
+        edge_event = {
+            "type": event_data.get("event_type", "ENTRY"),
+            "event_id": event_data["event_id"],
+            "camera_id": event_data.get("camera_id"),
+            "camera_name": event_data.get("camera_name", "Central"),
+            "camera_type": event_data.get("camera_type", "ENTRY"),
+            "data": {
+                "plate_text": event_data.get("plate_id", ""),
+                "plate_view": event_data.get("plate_view", ""),
+                "confidence": event_data.get("confidence", 0.0),
+                "source": event_data.get("source", "central")
+            }
+        }
+
+        # Add entry time or exit info
+        if event_data.get("entry_time"):
+            edge_event["entry_time"] = event_data["entry_time"]
+        if event_data.get("exit_time"):
+            edge_event["exit_time"] = event_data["exit_time"]
+            edge_event["fee"] = event_data.get("fee", 0)
+            edge_event["duration"] = event_data.get("duration", "")
+
+        await broadcast_to_edges(edge_event)
 
 
 def _clean_camera_data(cameras):
@@ -459,7 +498,9 @@ async def startup():
         # Initialize P2P Event Handler
         p2p_event_handler = P2PEventHandler(
             database=database,
-            this_central_id=p2p_manager.config.get_this_central_id()
+            this_central_id=p2p_manager.config.get_this_central_id(),
+            on_history_update=broadcast_history_update,
+            on_edge_broadcast=broadcast_to_edges,
         )
 
         # Initialize P2P Broadcaster
@@ -479,6 +520,8 @@ async def startup():
         p2p_manager.on_vehicle_entry_pending = p2p_event_handler.handle_vehicle_entry_pending
         p2p_manager.on_vehicle_entry_confirmed = p2p_event_handler.handle_vehicle_entry_confirmed
         p2p_manager.on_vehicle_exit = p2p_event_handler.handle_vehicle_exit
+        p2p_manager.on_history_update = p2p_event_handler.handle_history_update
+        p2p_manager.on_history_delete = p2p_event_handler.handle_history_delete
 
         # Set P2P sync callbacks
         p2p_manager.on_sync_request = p2p_sync_manager.handle_sync_request
@@ -550,13 +593,17 @@ async def receive_edge_event(request: Request):
         camera_type = event.get('camera_type')
         data = event.get('data', {})
 
-        # Generate event_id for ENTRY/EXIT to track sync
-        event_id = None
-        if event_type in ["ENTRY", "DETECTION"]:
+        # Use provided event_id if any; else generate
+        event_id = event.get("event_id")
+        if not event_id and event_type in ["ENTRY", "DETECTION"]:
             if p2p_broadcaster:
                 event_id = p2p_broadcaster.generate_event_id(
                     data.get("plate_text", "UNKNOWN").replace(" ", "")
                 )
+
+        # Dedupe: nếu đã có event_id này thì trả thành công luôn
+        if event_id and database and database.event_exists(event_id):
+            return JSONResponse({"success": True, "deduped": True, "event_id": event_id})
         # Process event
         result = parking_state.process_edge_event(
             event_type=event_type,
@@ -601,8 +648,8 @@ async def receive_edge_event(request: Request):
                 except Exception as e:
                     print(f"Error broadcasting P2P event: {e}")
 
-            # Broadcast to WebSocket clients for real-time update
-            asyncio.create_task(broadcast_history_update({
+            # Broadcast to WebSocket clients (frontend) AND Edge backends for real-time update
+            asyncio.create_task(sync_event_to_edges_and_frontend({
                 "event_type": event_type,
                 "camera_id": camera_id,
                 "camera_name": camera_name,
@@ -788,8 +835,33 @@ async def update_history_entry(history_id: int, request: Request):
         )
 
         if success:
-            # Broadcast update
+            # Broadcast to frontend WebSocket
             await broadcast_history_update({"type": "updated", "history_id": history_id})
+
+            # Broadcast to Edges (đồng bộ DB)
+            # TODO: Cần lấy thông tin đầy đủ của record để gửi cho Edge
+            # Hiện tại chỉ gửi notification, Edge cần implement logic nhận update
+            update_event = {
+                "type": "UPDATE",
+                "history_id": history_id,
+                "data": {
+                    "plate_text": new_plate_id,
+                    "plate_view": new_plate_view
+                }
+            }
+            await broadcast_to_edges(update_event)
+
+            # Broadcast to P2P peers (other Centrals)
+            if p2p_broadcaster:
+                try:
+                    asyncio.create_task(p2p_broadcaster.broadcast_history_update(
+                        history_id=history_id,
+                        plate_text=new_plate_id,
+                        plate_view=new_plate_view
+                    ))
+                except Exception as e:
+                    print(f"Error broadcasting P2P history update: {e}")
+
             return JSONResponse({"success": True})
         else:
             return JSONResponse({
@@ -813,8 +885,25 @@ async def delete_history_entry(history_id: int):
         success = database.delete_history_entry(history_id)
 
         if success:
-            # Broadcast update
+            # Broadcast to frontend WebSocket
             await broadcast_history_update({"type": "deleted", "history_id": history_id})
+
+            # Broadcast to Edges (đồng bộ DB)
+            delete_event = {
+                "type": "DELETE",
+                "history_id": history_id
+            }
+            await broadcast_to_edges(delete_event)
+
+            # Broadcast to P2P peers (other Centrals)
+            if p2p_broadcaster:
+                try:
+                    asyncio.create_task(p2p_broadcaster.broadcast_history_delete(
+                        history_id=history_id
+                    ))
+                except Exception as e:
+                    print(f"Error broadcasting P2P history delete: {e}")
+
             return JSONResponse({"success": True})
         else:
             return JSONResponse({
@@ -1636,6 +1725,242 @@ async def websocket_p2p_connection(websocket: WebSocket):
         if peer_id and p2p_manager:
             p2p_manager.unregister_websocket_connection(peer_id)
         print(f"[P2P WebSocket] Peer '{peer_id}' disconnected")
+
+
+@app.websocket("/ws/edge")
+async def websocket_edge_connection(websocket: WebSocket):
+    """
+    WebSocket endpoint for Edge backend communication
+    Edge backends connect here to send/receive events in real-time
+
+    Flow:
+    1. Edge connects and sends identification message with edge_id (camera_id)
+    2. Edge sends events (ENTRY/EXIT/UPDATE/DELETE) to Central
+    3. Central broadcasts events from other nodes to this Edge
+    """
+    await websocket.accept()
+
+    edge_id = None
+    try:
+        # Wait for identification message from edge
+        data = await websocket.receive_json()
+        edge_id = data.get("edge_id")  # This is camera_id
+
+        if not edge_id:
+            await websocket.close(code=1008, reason="No edge_id provided")
+            return
+
+        print(f"[Edge WebSocket] Edge '{edge_id}' connected")
+
+        # Register this WebSocket connection
+        edge_websocket_connections[str(edge_id)] = websocket
+
+        # Send acknowledgement
+        await websocket.send_json({
+            "type": "connected",
+            "message": f"Edge '{edge_id}' registered successfully"
+        })
+
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                message = await websocket.receive_json()
+
+                # Handle different message types
+                msg_type = message.get("type")
+
+                if msg_type == "ping":
+                    # Respond to ping
+                    await websocket.send_json({"type": "pong"})
+
+                elif msg_type in ["ENTRY", "EXIT", "DETECTION", "UPDATE", "DELETE"]:
+                    # Event from Edge - process it
+                    await handle_edge_websocket_event(edge_id, message)
+
+                else:
+                    print(f"[Edge WebSocket] Unknown message type from {edge_id}: {msg_type}")
+
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                print(f"[Edge WebSocket] Error processing message from {edge_id}: {e}")
+                import traceback
+                traceback.print_exc()
+                break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        import traceback
+        print(f"[Edge WebSocket] Connection error: {e}")
+        traceback.print_exc()
+    finally:
+        if edge_id:
+            edge_websocket_connections.pop(str(edge_id), None)
+        print(f"[Edge WebSocket] Edge '{edge_id}' disconnected")
+
+
+async def handle_edge_websocket_event(edge_id: str, event: dict):
+    """
+    Handle event received from Edge via WebSocket
+
+    Flow:
+    1. Process event and save to Central DB
+    2. Broadcast to P2P peers (other Centrals)
+    3. Do NOT broadcast back to Edge (it already has the event)
+    """
+    global parking_state, database, p2p_broadcaster
+
+    try:
+        event_type = event.get('type')
+        camera_id = event.get('camera_id', edge_id)
+        camera_name = event.get('camera_name', f"Camera {camera_id}")
+        camera_type = event.get('camera_type', 'ENTRY')
+        data = event.get('data', {})
+        event_id = event.get('event_id')
+
+        print(f"[Edge WebSocket] Received {event_type} event from edge {edge_id}: {event_id}")
+
+        # Handle admin operations (UPDATE/DELETE) separately
+        if event_type == "UPDATE":
+            # Admin updated record on Edge
+            history_id = data.get("history_id")  # history_id ở trong data!
+            new_plate_text = data.get("plate_text", "")
+            new_plate_view = data.get("plate_view", "")
+
+            if database.update_history_entry(history_id, new_plate_text, new_plate_view):
+                print(f"[Edge WebSocket] Updated record {history_id} from edge {edge_id}")
+                # Broadcast to frontend
+                await broadcast_history_update({"type": "updated", "history_id": history_id})
+                # Broadcast to other Edges (exclude sender)
+                update_event = {
+                    "type": "UPDATE",
+                    "history_id": history_id,
+                    "data": {
+                        "plate_text": new_plate_text,
+                        "plate_view": new_plate_view
+                    }
+                }
+                await broadcast_to_edges(update_event)
+                # Broadcast to P2P peers (other Centrals)
+                if p2p_broadcaster:
+                    try:
+                        asyncio.create_task(p2p_broadcaster.broadcast_history_update(
+                            history_id=history_id,
+                            plate_text=new_plate_text,
+                            plate_view=new_plate_view
+                        ))
+                    except Exception as e:
+                        print(f"[Edge WebSocket] Error broadcasting P2P update: {e}")
+            return
+
+        elif event_type == "DELETE":
+            # Admin deleted record on Edge
+            history_id = data.get("history_id")  # history_id ở trong data!
+
+            if database.delete_history_entry(history_id):
+                print(f"[Edge WebSocket] Deleted record {history_id} from edge {edge_id}")
+                # Broadcast to frontend
+                await broadcast_history_update({"type": "deleted", "history_id": history_id})
+                # Broadcast to other Edges (exclude sender)
+                delete_event = {
+                    "type": "DELETE",
+                    "history_id": history_id
+                }
+                await broadcast_to_edges(delete_event)
+                # Broadcast to P2P peers (other Centrals)
+                if p2p_broadcaster:
+                    try:
+                        asyncio.create_task(p2p_broadcaster.broadcast_history_delete(
+                            history_id=history_id
+                        ))
+                    except Exception as e:
+                        print(f"[Edge WebSocket] Error broadcasting P2P delete: {e}")
+            return
+
+        # Dedupe: if event already exists, skip (for ENTRY/EXIT events)
+        if event_id and database and database.event_exists(event_id):
+            print(f"[Edge WebSocket] Event {event_id} already exists, skipping (dedupe)")
+            return
+
+        # Process parking event using existing parking_state logic
+        result = parking_state.process_edge_event(
+            event_type=event_type,
+            camera_id=camera_id,
+            camera_name=camera_name,
+            camera_type=camera_type,
+            data=data,
+            event_id=event_id,
+        )
+
+        if result['success']:
+            print(f"[Edge WebSocket] Event processed successfully: {event_id}")
+
+            # Broadcast to P2P peers (other Centrals)
+            if p2p_broadcaster and result.get('action'):
+                try:
+                    if result['action'] == 'ENTRY' and result.get('history_id'):
+                        asyncio.create_task(p2p_broadcaster.broadcast_entry_pending(
+                            event_id=result.get('event_id') or event_id,
+                            plate_id=result['plate_id'],
+                            plate_view=result['plate_view'],
+                            edge_id=camera_id,
+                            camera_type=camera_type,
+                            direction='ENTRY',
+                            entry_time=result['entry_time']
+                        ))
+                    elif result['action'] == 'EXIT' and result.get('history_id'):
+                        asyncio.create_task(p2p_broadcaster.broadcast_exit(
+                            event_id=result.get('event_id'),
+                            exit_edge=camera_id,
+                            exit_time=result.get('exit_time', ''),
+                            fee=result.get('fee', 0),
+                            duration=result.get('duration', '')
+                        ))
+                except Exception as e:
+                    print(f"[Edge WebSocket] Error broadcasting P2P event: {e}")
+
+            # Broadcast to WebSocket clients (frontend) for real-time update
+            clean_result = {k: v for k, v in result.items() if not isinstance(v, bytes) and not (k == 'plate_image' and v is not None)}
+            asyncio.create_task(broadcast_history_update({
+                "event_type": event_type,
+                "camera_id": camera_id,
+                "camera_name": camera_name,
+                "camera_type": camera_type,
+                **clean_result
+            }))
+        else:
+            print(f"[Edge WebSocket] Event processing failed: {result.get('error')}")
+
+    except Exception as e:
+        print(f"[Edge WebSocket] Error handling edge event: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+async def broadcast_to_edges(event: dict):
+    """
+    Broadcast event to all connected Edge backends
+
+    Called when Central receives event from P2P peer that needs to be synced to Edges
+    """
+    if not edge_websocket_connections:
+        return
+
+    print(f"[Edge Broadcast] Broadcasting event to {len(edge_websocket_connections)} edge(s)")
+
+    disconnected = []
+    for edge_id, websocket in edge_websocket_connections.items():
+        try:
+            await websocket.send_json(event)
+            print(f"[Edge Broadcast] Sent to edge {edge_id}")
+        except Exception as e:
+            print(f"[Edge Broadcast] Failed to send to edge {edge_id}: {e}")
+            disconnected.append(edge_id)
+
+    # Remove disconnected edges
+    for edge_id in disconnected:
+        edge_websocket_connections.pop(edge_id, None)
 
 
 # Run Server

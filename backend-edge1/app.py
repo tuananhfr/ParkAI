@@ -14,9 +14,9 @@ import numpy as np
 import os
 from pathlib import Path
 import cv2
+import time
 
 import config
-import json
 import httpx
 from camera_manager import CameraManager
 from detection_service import DetectionService
@@ -219,7 +219,8 @@ async def startup():
                 central_url=config.CENTRAL_SERVER_URL,
                 camera_id=config.CAMERA_ID,
                 camera_name=config.CAMERA_NAME,
-                camera_type=config.CAMERA_TYPE
+                camera_type=config.CAMERA_TYPE,
+                parking_manager=parking_manager  # Pass parking_manager for incoming event sync
             )
             central_sync.start()
         else:
@@ -865,6 +866,16 @@ async def update_history_entry(history_id: int, request: Request):
             except Exception as e:
                 print(f"Failed to broadcast history update (updated): {e}")
 
+            # Sync to Central (nếu có)
+            if central_sync:
+                update_event_data = {
+                    "type": "UPDATE",
+                    "history_id": history_id,
+                    "plate_text": new_plate_id,
+                    "plate_view": new_plate_view
+                }
+                central_sync.send_event("UPDATE", update_event_data)
+
             return JSONResponse({"success": True})
         else:
             return JSONResponse({
@@ -893,6 +904,14 @@ async def delete_history_entry(history_id: int):
                 await broadcast_history_update({"type": "deleted", "history_id": history_id})
             except Exception as e:
                 print(f"Failed to broadcast history update (deleted): {e}")
+
+            # Sync to Central (nếu có)
+            if central_sync:
+                delete_event_data = {
+                    "type": "DELETE",
+                    "history_id": history_id
+                }
+                central_sync.send_event("DELETE", delete_event_data)
 
             return JSONResponse({"success": True})
         else:
@@ -1402,6 +1421,105 @@ async def update_parking_fees(request: Request):
             "message": "Đã cập nhật cấu hình phí gửi xe"
         })
         
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.post("/api/parking/manual-entry")
+async def manual_entry(request: Request):
+    """
+    Manual entry - Nhập thủ công biển số từ frontend
+
+    Body: {
+        "plate_text": "30A12345",
+        "camera_type": "ENTRY" | "EXIT"
+    }
+    """
+    global parking_manager, central_sync
+
+    if not parking_manager:
+        return JSONResponse({
+            "success": False,
+            "error": "Parking manager not initialized"
+        }, status_code=500)
+
+    try:
+        data = await request.json()
+        plate_text = data.get("plate_text")
+        camera_type = data.get("camera_type", "ENTRY")
+
+        if not plate_text:
+            return JSONResponse({
+                "success": False,
+                "error": "plate_text is required"
+            }, status_code=400)
+
+        # Generate event_id TRƯỚC khi lưu DB (theo đúng kiến trúc Edge-primary)
+        ms = int(time.time() * 1000)
+        clean_plate = plate_text.strip().upper().replace(" ", "")
+        event_id = f"edge-{config.CAMERA_ID}_{ms}_{clean_plate}"
+
+        # Process entry using parking_manager
+        result = parking_manager.process_entry(
+            plate_text=plate_text,
+            camera_id=config.CAMERA_ID,
+            camera_type=camera_type,
+            camera_name=config.CAMERA_NAME,
+            confidence=1.0,  # Manual entry = high confidence
+            source="manual",
+            event_id=event_id  # Truyền event_id để lưu vào DB
+        )
+
+        if result.get("success"):
+            # Broadcast to frontend WebSocket clients for real-time update
+            clean_result = {k: v for k, v in result.items() if not isinstance(v, bytes)}
+            asyncio.create_task(broadcast_history_update({
+                "event_type": camera_type,
+                "event_id": event_id,  # Include event_id
+                "camera_id": config.CAMERA_ID,
+                "camera_name": config.CAMERA_NAME,
+                "camera_type": camera_type,
+                **clean_result
+            }))
+
+            # Sync to Central if available (với event_id đã tạo)
+            if central_sync:
+                event_type = camera_type
+                sync_data = {
+                    "event_id": event_id,  # Dùng event_id đã tạo (QUAN TRỌNG!)
+                    "plate_text": plate_text,
+                    "plate_id": result.get("plate_id"),
+                    "confidence": 1.0,
+                    "source": "manual",
+                    "entry_id": result.get("entry_id"),
+                }
+
+                # Add specific fields based on event type
+                if event_type == "ENTRY":
+                    sync_data["entry_time"] = result.get("entry_time")
+                elif event_type == "EXIT":
+                    sync_data["entry_time"] = result.get("entry_time")
+                    sync_data["duration"] = result.get("duration")
+                    sync_data["fee"] = result.get("fee", 0)
+
+                # Send to Central với CÙNG event_id đã lưu vào Edge DB
+                central_sync.send_event(event_type, sync_data)
+
+            return JSONResponse({
+                "success": True,
+                **result
+            })
+        else:
+            return JSONResponse({
+                "success": False,
+                **result
+            }, status_code=400)
+
     except Exception as e:
         import traceback
         traceback.print_exc()

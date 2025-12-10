@@ -25,6 +25,8 @@ class P2PManager:
         self.on_vehicle_entry_pending: Optional[Callable] = None
         self.on_vehicle_entry_confirmed: Optional[Callable] = None
         self.on_vehicle_exit: Optional[Callable] = None
+        self.on_history_update: Optional[Callable] = None
+        self.on_history_delete: Optional[Callable] = None
         self.on_sync_request: Optional[Callable] = None
         self.on_sync_response: Optional[Callable] = None
         self.on_peer_connected: Optional[Callable] = None
@@ -142,6 +144,16 @@ class P2PManager:
                 # Handle sync response
                 if self.on_sync_response:
                     await self.on_sync_response(message, peer_id or message.source_central)
+
+            elif message.type == MessageType.HISTORY_UPDATE:
+                # Handle history update from P2P peer
+                if self.on_history_update:
+                    await self.on_history_update(message)
+
+            elif message.type == MessageType.HISTORY_DELETE:
+                # Handle history delete from P2P peer
+                if self.on_history_delete:
+                    await self.on_history_delete(message)
 
             else:
                 print(f"Unknown message type: {message.type}")

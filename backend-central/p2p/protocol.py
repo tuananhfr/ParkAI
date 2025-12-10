@@ -14,6 +14,10 @@ class MessageType(str, Enum):
     VEHICLE_ENTRY_CONFIRMED = "VEHICLE_ENTRY_CONFIRMED"
     VEHICLE_EXIT = "VEHICLE_EXIT"
 
+    # History admin operations
+    HISTORY_UPDATE = "HISTORY_UPDATE"
+    HISTORY_DELETE = "HISTORY_DELETE"
+
     # Sync & Health
     HEARTBEAT = "HEARTBEAT"
     SYNC_REQUEST = "SYNC_REQUEST"
@@ -141,6 +145,44 @@ def create_exit_message(
             "exit_time": exit_time,
             "fee": fee,
             "duration": duration
+        }
+    )
+
+
+def create_history_update_message(
+    source_central: str,
+    history_id: int,
+    plate_text: str,
+    plate_view: str,
+    timestamp: Optional[int] = None
+) -> P2PMessage:
+    """Create HISTORY_UPDATE message for admin edits"""
+    return P2PMessage(
+        msg_type=MessageType.HISTORY_UPDATE,
+        source_central=source_central,
+        timestamp=timestamp,
+        event_id=None,
+        data={
+            "history_id": history_id,
+            "plate_text": plate_text,
+            "plate_view": plate_view
+        }
+    )
+
+
+def create_history_delete_message(
+    source_central: str,
+    history_id: int,
+    timestamp: Optional[int] = None
+) -> P2PMessage:
+    """Create HISTORY_DELETE message for admin deletes"""
+    return P2PMessage(
+        msg_type=MessageType.HISTORY_DELETE,
+        source_central=source_central,
+        timestamp=timestamp,
+        event_id=None,
+        data={
+            "history_id": history_id
         }
     )
 

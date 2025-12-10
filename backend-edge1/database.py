@@ -108,6 +108,20 @@ class Database:
                 ON entries(entry_time)
             """)
 
+            # Migration: Add event_id column for sync deduplication
+            try:
+                cursor.execute("ALTER TABLE entries ADD COLUMN event_id TEXT")
+                print("[Database] Added event_id column to entries table")
+            except sqlite3.OperationalError:
+                # Column already exists
+                pass
+
+            # Index for event_id
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_event_id
+                ON entries(event_id)
+            """)
+
             conn.commit()
             conn.close()
 
@@ -475,3 +489,71 @@ class Database:
                 changes.append(change)
 
             return changes
+
+    # ===== Methods for Central Sync =====
+
+    def event_exists(self, event_id: str) -> bool:
+        """Check if event_id already exists in database"""
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT 1 FROM entries WHERE event_id = ? LIMIT 1",
+                (event_id,)
+            )
+
+            result = cursor.fetchone()
+            conn.close()
+
+            return result is not None
+
+    def add_entry_with_event_id(self, event_id, plate_id, plate_view, entry_time, camera_id, camera_name,
+                                  confidence, source, status="IN"):
+        """Add entry with event_id for deduplication"""
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO entries (
+                    event_id, plate_id, plate_view, entry_time,
+                    entry_camera_id, entry_camera_name,
+                    entry_confidence, entry_source, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                event_id, plate_id, plate_view, entry_time,
+                camera_id, camera_name,
+                confidence, source, status
+            ))
+
+            entry_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+            return entry_id
+
+    def update_exit_by_event_id(self, event_id, exit_time, camera_id, camera_name,
+                                  confidence, source, duration, fee):
+        """Update exit info by event_id (for sync)"""
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE entries
+                SET exit_time = ?, exit_camera_id = ?, exit_camera_name = ?,
+                    exit_confidence = ?, exit_source = ?, duration = ?, fee = ?,
+                    status = 'OUT', updated_at = CURRENT_TIMESTAMP
+                WHERE event_id = ? AND status = 'IN'
+            """, (
+                exit_time, camera_id, camera_name,
+                confidence, source, duration, fee,
+                event_id
+            ))
+
+            rows_updated = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            return rows_updated > 0

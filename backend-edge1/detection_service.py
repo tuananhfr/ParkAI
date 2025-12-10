@@ -296,15 +296,15 @@ class DetectionService:
                                         event_type = "ENTRY" if config.CAMERA_TYPE == "ENTRY" else "EXIT"
                                         sync_data = {
                                             "plate_text": text,
+                                            "plate_id": entry_result.get("plate_id"),
                                             "confidence": 0.95,
                                             "source": "auto",
-                                            "entry_id": entry_result.get('entry_id')
+                                            "entry_id": entry_result.get('entry_id'),
+                                            "entry_time": entry_result.get('entry_time'),
                                         }
 
                                         # Them thong tin cho EXIT
                                         if event_type == "EXIT":
-                                            if entry_result.get('entry_time'):
-                                                sync_data['entry_time'] = entry_result.get('entry_time')
                                             if entry_result.get('duration'):
                                                 sync_data['duration'] = entry_result.get('duration')
                                             if entry_result.get('fee') is not None:

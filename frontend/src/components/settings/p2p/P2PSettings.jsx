@@ -650,37 +650,6 @@ const P2PSettings = () => {
           )}
         </div>
       </div>
-
-      {/* Info Footer */}
-      <div className="alert alert-info mt-4">
-        <h6 className="alert-heading">
-          <i className="bi bi-info-circle me-2"></i>
-          Hướng dẫn cấu hình P2P
-        </h6>
-        <ul className="mb-0 small">
-          <li>
-            <strong>Central ID:</strong> Phải duy nhất cho mỗi central (ví dụ:
-            central-1, central-2, ...)
-          </li>
-          <li>
-            <strong>IP Address:</strong> IP của central trong mạng LAN (ví dụ:
-            192.168.1.101)
-          </li>
-          <li>
-            <strong>API Port:</strong> WebSocket P2P và HTTP API đều chạy trên
-            cùng port (mặc định: 8000). Không cần cấu hình port riêng cho P2P.
-          </li>
-          <li>
-            <strong>Thêm Peer:</strong> Chỉ cần nhập IP address của peer. ID sẽ
-            được lấy tự động và cả 2 central sẽ tự động đăng ký với nhau
-            (bi-directional)
-          </li>
-          <li>
-            <strong>Lưu ý:</strong> Sau khi lưu cấu hình "This Central", cần
-            khởi động lại server để áp dụng
-          </li>
-        </ul>
-      </div>
     </div>
   );
 };

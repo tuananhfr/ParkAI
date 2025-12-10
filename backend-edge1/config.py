@@ -107,4 +107,4 @@ STAFF_JSON_FILE = "data/staff.json"  # File JSON local mặc định
 SUBSCRIPTION_API_URL = os.getenv("SUBSCRIPTION_API_URL", "")  # Ví dụ: "https://api.example.com/subscriptions"
 SUBSCRIPTION_JSON_FILE = "data/subscriptions.json"  # File JSON local mặc định
 
-# 
+

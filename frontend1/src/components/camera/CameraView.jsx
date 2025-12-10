@@ -444,7 +444,11 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               if (entrySaved) {
                 //Auto-saved thanh cong
                 const entryResult = detectionWithText?.entry_result;
-                setNotificationMessage(`Đã lưu: ${normalizedPlate} - ${entryResult?.message || "Thành công"}`);
+                setNotificationMessage(
+                  `Đã lưu: ${normalizedPlate} - ${
+                    entryResult?.message || "Thành công"
+                  }`
+                );
 
                 //Trigger history update
                 if (onHistoryUpdate) {
@@ -452,7 +456,9 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
                 }
               } else if (validationStatus === "invalid") {
                 //Validation failed
-                setNotificationMessage(`Lỗi: ${validationMessage || "Xe không hợp lệ"}`);
+                setNotificationMessage(
+                  `Lỗi: ${validationMessage || "Xe không hợp lệ"}`
+                );
               } else {
                 //Doc duoc bien so nhung khong auto-save (co the la cau hinh)
                 setNotificationMessage((prev) => {
@@ -466,7 +472,10 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               //Clear notification sau 5s
               setTimeout(() => {
                 setNotificationMessage((prev) => {
-                  if (prev && (prev.includes("Đã lưu") || prev.includes("Lỗi"))) {
+                  if (
+                    prev &&
+                    (prev.includes("Đã lưu") || prev.includes("Lỗi"))
+                  ) {
                     return null;
                   }
                   return prev;
@@ -550,7 +559,7 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     }
   };
 
-  const handlePlateConfirm = (normalizedPlate, message) => {
+  const handlePlateConfirm = async (normalizedPlate, message) => {
     if (!normalizedPlate) {
       //Validation failed, chi hien thi message
       setNotificationMessage(message);
@@ -567,12 +576,48 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     userEditedRef.current = true;
     setPlateSource("manual");
 
-    if (message) {
-      setNotificationMessage(message);
-      setTimeout(() => {
-        setNotificationMessage(null);
-      }, 2000);
+    // Gửi lưu entry thủ công TRỰC TIẾP ĐẾN EDGE (không qua Central!)
+    // Kiến trúc: Frontend → Edge API → Edge lưu DB → Edge sync to Central
+    // Lợi ích: Nếu Central down, Edge vẫn hoạt động bình thường
+    try {
+      // Lấy Edge URL từ control_proxy (mỗi camera có URL riêng)
+      const edgeUrl = controlProxy?.base_url || CENTRAL_URL;
+
+      const resp = await fetch(`${edgeUrl}/api/parking/manual-entry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          plate_text: normalizedPlate,
+          camera_type: cameraInfo?.type || "ENTRY",
+          // Không cần camera_id vì Edge biết camera của nó
+        }),
+      });
+
+      const result = await resp.json().catch(() => ({}));
+
+      if (resp.ok && result.success) {
+        setNotificationMessage(
+          message || `Đã lưu: ${normalizedPlate} - ${result.message || ""}`
+        );
+        if (onHistoryUpdate) {
+          setTimeout(() => onHistoryUpdate(), 500);
+        }
+      } else {
+        setNotificationMessage(
+          result.error ||
+            "Lưu thủ công thất bại. Kiểm tra kết nối hoặc định dạng biển số."
+        );
+      }
+    } catch (err) {
+      setNotificationMessage(
+        "Không thể kết nối server. Vui lòng thử lại hoặc kiểm tra mạng."
+      );
     }
+
+    // Tự clear thông báo sau một chút
+    setTimeout(() => {
+      setNotificationMessage(null);
+    }, 3000);
   };
 
   return (

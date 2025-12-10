@@ -6,7 +6,9 @@ from typing import Optional
 from .protocol import (
     create_entry_pending_message,
     create_entry_confirmed_message,
-    create_exit_message
+    create_exit_message,
+    create_history_update_message,
+    create_history_delete_message
 )
 
 
@@ -120,3 +122,55 @@ class P2PParkingBroadcaster:
 
         except Exception as e:
             print(f"Error broadcasting exit: {e}")
+
+    async def broadcast_history_update(
+        self,
+        history_id: int,
+        plate_text: str,
+        plate_view: str
+    ):
+        """
+        Broadcast HISTORY_UPDATE event (admin edit)
+
+        Call này khi admin sửa record trên Central
+        """
+        if not self.p2p_manager or self.p2p_manager.config.is_standalone():
+            return
+
+        try:
+            message = create_history_update_message(
+                source_central=self.central_id,
+                history_id=history_id,
+                plate_text=plate_text,
+                plate_view=plate_view
+            )
+
+            await self.p2p_manager.broadcast(message)
+            print(f"Broadcasted HISTORY_UPDATE: record {history_id}")
+
+        except Exception as e:
+            print(f"Error broadcasting history update: {e}")
+
+    async def broadcast_history_delete(
+        self,
+        history_id: int
+    ):
+        """
+        Broadcast HISTORY_DELETE event (admin delete)
+
+        Call này khi admin xóa record trên Central
+        """
+        if not self.p2p_manager or self.p2p_manager.config.is_standalone():
+            return
+
+        try:
+            message = create_history_delete_message(
+                source_central=self.central_id,
+                history_id=history_id
+            )
+
+            await self.p2p_manager.broadcast(message)
+            print(f"Broadcasted HISTORY_DELETE: record {history_id}")
+
+        except Exception as e:
+            print(f"Error broadcasting history delete: {e}")
