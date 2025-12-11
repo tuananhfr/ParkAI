@@ -237,7 +237,7 @@ class Database:
                 return dict(row)
             return None
 
-    def get_history(self, limit=100, offset=0, today_only=False, status=None, search=None):
+    def get_history(self, limit=100, offset=0, today_only=False, status=None, search=None, in_parking_only=False, entries_only=False):
         """
         Lấy lịch sử
 
@@ -247,6 +247,8 @@ class Database:
             today_only: Chỉ lấy hôm nay
             status: Filter theo status (IN | OUT)
             search: Search theo plate_id hoặc plate_view
+            in_parking_only: Chỉ lấy xe đang trong bãi (status='IN' và exit_time IS NULL)
+            entries_only: Lấy tất cả các lần vào (không filter thêm)
 
         Return: list of dict
         """
@@ -262,7 +264,15 @@ class Database:
                 query += " AND date(entry_time) = ?"
                 params.append(today)
 
-            if status:
+            if in_parking_only:
+                # Filter "Trong bai" - Chi lay xe DANG TRONG BAI (status='IN' va exit_time IS NULL)
+                query += " AND status = 'IN' AND exit_time IS NULL"
+            elif entries_only:
+                # Filter "VAO" - Lay TAT CA cac lan vao (bao gom ca da ra)
+                # Moi record trong entries deu la mot lan vao, khong can filter them
+                pass
+            elif status:
+                # Filter "RA" - Lay cac lan ra (status='OUT')
                 query += " AND status = ?"
                 params.append(status)
 
@@ -302,9 +312,11 @@ class Database:
             """, (today,))
             today_total = cursor.fetchone()[0]
 
+            # entries_today: Đếm TẤT CẢ các lần vào hôm nay (không phân biệt đã ra hay chưa)
+            # Giống logic central: COUNT(*) WHERE DATE(entry_time) = DATE('now')
             cursor.execute("""
                 SELECT COUNT(*) FROM entries
-                WHERE date(entry_time) = ? AND status = 'IN'
+                WHERE date(entry_time) = ?
             """, (today,))
             today_in = cursor.fetchone()[0]
 

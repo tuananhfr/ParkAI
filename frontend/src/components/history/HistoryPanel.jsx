@@ -252,7 +252,6 @@ const HistoryPanel = ({ backendUrl }) => {
             }`}
             onClick={() => setFilter("in_parking")}
           >
-            <i className="bi bi-car-front-fill me-1"></i>
             Trong bãi
           </button>
           <button

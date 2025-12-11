@@ -56,6 +56,8 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     duration: null,
     customer_type: null,
     is_subscriber: false,
+    last_location: null,
+    last_location_time: null,
   });
 
   //Update camera info when camera changes
@@ -97,6 +99,8 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           duration: null,
           customer_type: null,
           is_subscriber: false,
+          last_location: null,
+          last_location_time: null,
         });
         return;
       }
@@ -126,6 +130,8 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               customer_type:
                 vehicle.customer_type || vehicle.vehicle_type || null,
               is_subscriber: vehicle.is_subscriber || false,
+              last_location: vehicle.last_location || null,
+              last_location_time: vehicle.last_location_time || null,
             });
           } else {
             setVehicleInfo({
@@ -135,6 +141,8 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
               duration: null,
               customer_type: null,
               is_subscriber: false,
+              last_location: null,
+              last_location_time: null,
             });
           }
         }
@@ -450,9 +458,113 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
                   }`
                 );
 
+                //Cap nhat vehicleInfo ngay lap tuc voi thong tin tu entry_result
+                if (entryResult) {
+                  setVehicleInfo((prev) => {
+                    const updated = { ...prev };
+
+                    //Neu la EXIT, cap nhat exit_time, fee, duration
+                    if (entryResult.action === "EXIT") {
+                      updated.exit_time = entryResult.exit_time || null;
+                      updated.fee = entryResult.fee || 0;
+                      updated.duration = entryResult.duration || null;
+                      //Giữ nguyên entry_time nếu có
+                      if (entryResult.entry_time) {
+                        updated.entry_time = entryResult.entry_time;
+                      }
+                    }
+                    //Neu la ENTRY hoac AUTO_ENTRY, cap nhat entry_time
+                    else if (
+                      entryResult.action === "ENTRY" ||
+                      entryResult.action === "AUTO_ENTRY"
+                    ) {
+                      updated.entry_time = entryResult.entry_time || null;
+                      //Reset exit_time neu la entry moi
+                      if (!prev.entry_time) {
+                        updated.exit_time = null;
+                        updated.fee = 0;
+                        updated.duration = null;
+                      }
+                    }
+
+                    //Neu la LOCATION_UPDATE, AUTO_ENTRY hoac co location trong result, cap nhat location
+                    if (
+                      entryResult.action === "LOCATION_UPDATE" ||
+                      entryResult.action === "AUTO_ENTRY" ||
+                      entryResult.location
+                    ) {
+                      updated.last_location = entryResult.location || null;
+                      updated.last_location_time =
+                        entryResult.location_time || null;
+                    }
+
+                    //Cap nhat customer_type neu co
+                    if (entryResult.customer_type) {
+                      updated.customer_type = entryResult.customer_type;
+                    }
+                    if (entryResult.is_subscriber !== undefined) {
+                      updated.is_subscriber = entryResult.is_subscriber;
+                    }
+
+                    return updated;
+                  });
+                }
+
                 //Trigger history update
                 if (onHistoryUpdate) {
                   setTimeout(() => onHistoryUpdate(), 500);
+                }
+
+                //Refresh vehicleInfo sau khi location được cập nhật (de dam bao location hien thi ngay)
+                //Neu la PARKING_LOT camera va co location trong result, refresh vehicleInfo
+                if (
+                  cameraInfo.type === "PARKING_LOT" &&
+                  entryResult?.location
+                ) {
+                  setTimeout(() => {
+                    //Trigger fetchVehicleInfo de lay location moi nhat tu API
+                    const fetchVehicleInfo = async () => {
+                      if (!plateText || plateText.trim().length < 5) return;
+
+                      try {
+                        const response = await fetch(
+                          `${CENTRAL_URL}/api/parking/history?limit=100&today_only=false`
+                        );
+                        const data = await response.json();
+
+                        if (data.success && data.history) {
+                          const normalizedPlate = plateText
+                            .trim()
+                            .toUpperCase();
+                          const vehicle = data.history.find(
+                            (entry) =>
+                              entry.plate_id?.toUpperCase() ===
+                                normalizedPlate ||
+                              entry.plate_view?.toUpperCase() ===
+                                normalizedPlate ||
+                              entry.plate_view
+                                ?.replace(/-/g, "")
+                                .toUpperCase() ===
+                                normalizedPlate.replace(/-/g, "")
+                          );
+
+                          if (vehicle) {
+                            setVehicleInfo((prev) => ({
+                              ...prev,
+                              last_location:
+                                vehicle.last_location || prev.last_location,
+                              last_location_time:
+                                vehicle.last_location_time ||
+                                prev.last_location_time,
+                            }));
+                          }
+                        }
+                      } catch (err) {
+                        //Silent fail
+                      }
+                    };
+                    fetchVehicleInfo();
+                  }, 1000); // Delay 1s de dam bao DB da duoc cap nhat
                 }
               } else if (validationStatus === "invalid") {
                 //Validation failed

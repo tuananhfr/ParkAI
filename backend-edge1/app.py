@@ -806,7 +806,9 @@ async def get_parking_history(
     offset: int = 0,
     today_only: bool = False,
     status: str = None,
-    search: str = None
+    search: str = None,
+    in_parking_only: bool = False,
+    entries_only: bool = False
 ):
     """
     Get parking history (compatible với Central API)
@@ -817,6 +819,8 @@ async def get_parking_history(
         today_only: Chỉ lấy hôm nay
         status: Filter theo status (IN | OUT)
         search: Search theo plate_id hoặc plate_view
+        in_parking_only: Chỉ lấy xe đang trong bãi (status='IN' và exit_time IS NULL)
+        entries_only: Lấy tất cả các lần vào (không filter thêm)
     """
     global parking_manager
 
@@ -826,7 +830,9 @@ async def get_parking_history(
             offset=offset,
             today_only=today_only,
             status=status,
-            search=search
+            search=search,
+            in_parking_only=in_parking_only,
+            entries_only=entries_only
         )
         stats = parking_manager.db.get_stats()
 
