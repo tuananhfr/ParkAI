@@ -230,7 +230,7 @@ class ParkingManager:
         Xử lý entry từ camera
 
         Args:
-            camera_type: "ENTRY" | "EXIT"
+            camera_type: "ENTRY" | "EXIT" | "PARKING_LOT"
             event_id: Event ID cho deduplication (optional, sẽ tạo tự động nếu None)
         """
         plate_id, display_text = self.validate_plate(plate_text)
@@ -251,7 +251,12 @@ class ParkingManager:
         elif camera_type == "EXIT":
             return self._process_exit(
                 plate_id, display_text, camera_id, camera_name,
-                confidence, source
+                confidence, source, event_id
+            )
+        elif camera_type == "PARKING_LOT":
+            return self._process_parking_lot(
+                plate_id, display_text, camera_id, camera_name,
+                confidence, source, event_id
             )
         else:
             return {
@@ -282,30 +287,23 @@ class ParkingManager:
 
         entry_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Lưu vào DB với event_id (nếu có)
-        if event_id:
-            entry_id = self.db.add_entry_with_event_id(
-                event_id=event_id,
-                plate_id=plate_id,
-                plate_view=display_text,
-                entry_time=entry_time,
-                camera_id=camera_id,
-                camera_name=camera_name,
-                confidence=confidence,
-                source=source,
-                status="IN"
-            )
-        else:
-            # Fallback: không có event_id (backward compatibility)
-            entry_id = self.db.add_entry(
-                plate_id=plate_id,
-                plate_view=display_text,
-                camera_id=camera_id,
-                camera_name=camera_name,
-                confidence=confidence,
-                source=source,
-                status="IN"
-            )
+        # Tạo event_id nếu chưa có
+        if not event_id:
+            ms = int(datetime.now().timestamp() * 1000)
+            event_id = f"edge-{camera_id}_{ms}_{plate_id}"
+
+        # Lưu vào DB với event_id
+        entry_id = self.db.add_entry_with_event_id(
+            event_id=event_id,
+            plate_id=plate_id,
+            plate_view=display_text,
+            entry_time=entry_time,
+            camera_id=camera_id,
+            camera_name=camera_name,
+            confidence=confidence,
+            source=source,
+            status="IN"
+        )
 
         return {
             "success": True,
@@ -319,7 +317,7 @@ class ParkingManager:
         }
 
     def _process_exit(self, plate_id, display_text, camera_id, camera_name,
-                     confidence, source):
+                     confidence, source, event_id=None):
         """Xử lý xe RA"""
 
         # Tim entry IN
@@ -330,6 +328,10 @@ class ParkingManager:
                 "success": False,
                 "error": f"Xe {display_text} không có record VÀO!"
             }
+
+        # Lấy event_id của record IN nếu chưa có
+        if not event_id:
+            event_id = entry.get("event_id")
 
         # Tinh duration
         duration = self.calculate_duration(entry['entry_time'], datetime.now())
@@ -372,8 +374,94 @@ class ParkingManager:
             "fee": fee,
             "customer_type": customer_type,  # Thêm loại khách
             "is_subscriber": is_subscriber,  # Thêm flag subscriber
+            "event_id": event_id,
             "message": f"Xe {display_text} RA. Phí: {fee:,}đ. Thời gian: {duration}"
         }
+
+    def _process_parking_lot(self, plate_id, display_text, camera_id, camera_name,
+                             confidence, source, event_id=None):
+        """
+        Xử lý detection từ camera PARKING_LOT (camera trong bãi)
+
+        Logic:
+        - Nếu xe ĐÃ trong bãi (status=IN): Cập nhật vị trí
+        - Nếu xe CHƯA trong bãi: Tự động tạo entry (đánh dấu anomaly)
+        """
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Check duplicate by event_id (nếu có)
+        if event_id and self.db.event_exists(event_id):
+            return {
+                "success": False,
+                "error": f"Event {event_id} đã tồn tại (duplicate)",
+                "duplicate": True
+            }
+
+        # Kiểm tra xe có trong bãi không
+        vehicle = self.db.find_vehicle_in_parking(plate_id)
+
+        if vehicle:
+            # ✅ Case 1: Xe ĐÃ trong bãi → Update location
+            success = self.db.update_vehicle_location(
+                plate_id=plate_id,
+                location=camera_name,
+                location_time=current_time
+            )
+
+            if success:
+                print(f"[PARKING_LOT] Updated location for {display_text}: {camera_name}")
+                return {
+                    "success": True,
+                    "action": "LOCATION_UPDATE",
+                    "plate": display_text,
+                    "plate_id": plate_id,
+                    "location": camera_name,
+                    "location_time": current_time,
+                    "is_anomaly": False,
+                    "event_id": event_id,
+                    "message": f"Xe {display_text} đang ở {camera_name}"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Failed to update location for {display_text}"
+                }
+        else:
+            # ⚠️ Case 2: Xe CHƯA trong bãi → Tự động tạo entry (anomaly)
+            # Generate event_id if not provided
+            if not event_id:
+                ms = int(datetime.now().timestamp() * 1000)
+                event_id = f"edge-{camera_id}_{ms}_{plate_id}"
+
+            entry_id = self.db.create_entry_from_parking_lot(
+                event_id=event_id,
+                plate_id=plate_id,
+                plate_view=display_text,
+                entry_time=current_time,
+                camera_name=camera_name,
+                location=camera_name,
+                location_time=current_time
+            )
+
+            if entry_id:
+                print(f"⚠️ [PARKING_LOT] Auto-created entry for {display_text} (ANOMALY)")
+                return {
+                    "success": True,
+                    "action": "AUTO_ENTRY",
+                    "entry_id": entry_id,
+                    "plate": display_text,
+                    "plate_id": plate_id,
+                    "location": camera_name,
+                    "location_time": current_time,
+                    "is_anomaly": True,
+                    "event_id": event_id,
+                    "message": f"⚠️ Xe {display_text} được tự động tạo entry tại {camera_name} (ANOMALY)"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Failed to create entry for {display_text}"
+                }
 
     def calculate_duration(self, entry_time, exit_time):
         """Tính thời gian gửi"""

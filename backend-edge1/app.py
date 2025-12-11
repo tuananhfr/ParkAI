@@ -220,7 +220,9 @@ async def startup():
                 camera_id=config.CAMERA_ID,
                 camera_name=config.CAMERA_NAME,
                 camera_type=config.CAMERA_TYPE,
-                parking_manager=parking_manager  # Pass parking_manager for incoming event sync
+                parking_manager=parking_manager,  # Pass parking_manager for incoming event sync
+                event_loop=loop,
+                history_broadcaster=broadcast_history_update
             )
             central_sync.start()
         else:
@@ -672,11 +674,15 @@ async def init_sync_with_central(request: Request):
 
         # Khoi tao central_sync service moi
         from central_sync import CentralSyncService
+        loop = asyncio.get_running_loop()
         central_sync = CentralSyncService(
             central_url=config.CENTRAL_SERVER_URL,
             camera_id=config.CAMERA_ID,
             camera_name=config.CAMERA_NAME,
-            camera_type=config.CAMERA_TYPE
+            camera_type=config.CAMERA_TYPE,
+            parking_manager=parking_manager,
+            event_loop=loop,
+            history_broadcaster=broadcast_history_update
         )
         central_sync.start()
 
@@ -860,6 +866,10 @@ async def update_history_entry(history_id: int, request: Request):
         )
 
         if success:
+            # Lấy event_id để sync chính xác sang central (dựa trên event_id chung)
+            event_info = parking_manager.db.get_entry_event_info(history_id) if parking_manager else None
+            event_id = event_info.get("event_id") if event_info else None
+
             # Broadcast update cho frontend
             try:
                 await broadcast_history_update({"type": "updated", "history_id": history_id})
@@ -871,6 +881,7 @@ async def update_history_entry(history_id: int, request: Request):
                 update_event_data = {
                     "type": "UPDATE",
                     "history_id": history_id,
+                    "event_id": event_id,
                     "plate_text": new_plate_id,
                     "plate_view": new_plate_view
                 }
@@ -899,6 +910,12 @@ async def delete_history_entry(history_id: int):
         success = parking_manager.db.delete_history_entry(history_id)
 
         if success:
+            # Lấy event_id để central map đúng bản ghi
+            event_info = parking_manager.db.get_entry_event_info(history_id) if parking_manager else None
+            event_id = event_info.get("event_id") if event_info else None
+            plate_id = event_info.get("plate_id") if event_info else None
+            plate_view = event_info.get("plate_view") if event_info else None
+
             # Broadcast delete cho frontend
             try:
                 await broadcast_history_update({"type": "deleted", "history_id": history_id})
@@ -909,7 +926,10 @@ async def delete_history_entry(history_id: int):
             if central_sync:
                 delete_event_data = {
                     "type": "DELETE",
-                    "history_id": history_id
+                    "history_id": history_id,
+                    "event_id": event_id,
+                    "plate_text": plate_id,
+                    "plate_view": plate_view
                 }
                 central_sync.send_event("DELETE", delete_event_data)
 
@@ -1437,7 +1457,7 @@ async def manual_entry(request: Request):
 
     Body: {
         "plate_text": "30A12345",
-        "camera_type": "ENTRY" | "EXIT"
+        "camera_type": "ENTRY" | "EXIT" | "PARKING_LOT"
     }
     """
     global parking_manager, central_sync
@@ -1476,10 +1496,22 @@ async def manual_entry(request: Request):
         )
 
         if result.get("success"):
+            # Determine event type for broadcast/sync (support PARKING_LOT)
+            action = result.get("action")
+            if camera_type == "PARKING_LOT":
+                if action == "AUTO_ENTRY":
+                    event_type = "ENTRY"
+                elif action == "LOCATION_UPDATE":
+                    event_type = "LOCATION_UPDATE"
+                else:
+                    event_type = "LOCATION_UPDATE"
+            else:
+                event_type = camera_type
+
             # Broadcast to frontend WebSocket clients for real-time update
             clean_result = {k: v for k, v in result.items() if not isinstance(v, bytes)}
             asyncio.create_task(broadcast_history_update({
-                "event_type": camera_type,
+                "event_type": event_type,
                 "event_id": event_id,  # Include event_id
                 "camera_id": config.CAMERA_ID,
                 "camera_name": config.CAMERA_NAME,
@@ -1489,7 +1521,6 @@ async def manual_entry(request: Request):
 
             # Sync to Central if available (với event_id đã tạo)
             if central_sync:
-                event_type = camera_type
                 sync_data = {
                     "event_id": event_id,  # Dùng event_id đã tạo (QUAN TRỌNG!)
                     "plate_text": plate_text,
@@ -1502,10 +1533,21 @@ async def manual_entry(request: Request):
                 # Add specific fields based on event type
                 if event_type == "ENTRY":
                     sync_data["entry_time"] = result.get("entry_time")
+                    if result.get("is_anomaly") is not None:
+                        sync_data["is_anomaly"] = result.get("is_anomaly")
+                    if result.get("location"):
+                        sync_data["location"] = result.get("location")
+                    if result.get("location_time"):
+                        sync_data["location_time"] = result.get("location_time")
                 elif event_type == "EXIT":
                     sync_data["entry_time"] = result.get("entry_time")
                     sync_data["duration"] = result.get("duration")
                     sync_data["fee"] = result.get("fee", 0)
+                elif event_type == "LOCATION_UPDATE":
+                    sync_data["location"] = result.get("location", config.CAMERA_NAME)
+                    sync_data["location_time"] = result.get("location_time")
+                    if result.get("is_anomaly") is not None:
+                        sync_data["is_anomaly"] = result.get("is_anomaly")
 
                 # Send to Central với CÙNG event_id đã lưu vào Edge DB
                 central_sync.send_event(event_type, sync_data)

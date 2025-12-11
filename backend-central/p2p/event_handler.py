@@ -149,17 +149,40 @@ class P2PEventHandler:
             fee = data.get("fee", 0)
             duration = data.get("duration", "")
 
+            # Try to find entry by event_id first
+            entry = self.db.find_history_by_event_id(event_id)
+
+            # Fallback: nếu không tìm thấy bằng event_id, tìm bằng plate_id
+            plate_id_from_data = data.get("plate_id")
+            if not entry and plate_id_from_data:
+                entry = self.db.find_vehicle_in_parking(plate_id_from_data)
+
             # Update exit info
-            success = self.db.update_vehicle_exit_p2p(
-                event_id=event_id,
-                exit_time=exit_time,
-                camera_id=None,
-                camera_name=f"{exit_central}/{exit_edge}",
-                confidence=0.0,
-                source="p2p_sync",
-                duration=duration,
-                fee=fee
-            )
+            # Nếu tìm thấy entry bằng plate_id (fallback), dùng update_vehicle_exit thông thường
+            if entry and not self.db.find_history_by_event_id(event_id):
+                # Fallback path: update by plate_id
+                success = self.db.update_vehicle_exit(
+                    plate_id=plate_id_from_data,
+                    exit_time=exit_time,
+                    camera_id=None,
+                    camera_name=f"{exit_central}/{exit_edge}",
+                    confidence=0.0,
+                    source="p2p_sync",
+                    duration=duration,
+                    fee=fee
+                )
+            else:
+                # Normal path: update by event_id
+                success = self.db.update_vehicle_exit_p2p(
+                    event_id=event_id,
+                    exit_time=exit_time,
+                    camera_id=None,
+                    camera_name=f"{exit_central}/{exit_edge}",
+                    confidence=0.0,
+                    source="p2p_sync",
+                    duration=duration,
+                    fee=fee
+                )
 
             if success:
                 print(f"Synced EXIT from {exit_central}: event {event_id}, fee {fee}")
@@ -346,6 +369,91 @@ class P2PEventHandler:
 
         except Exception as e:
             print(f"Error handling HISTORY_DELETE: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def handle_location_update(self, message: P2PMessage):
+        """
+        Handle LOCATION_UPDATE từ P2P peer (PARKING_LOT camera detection)
+        """
+        try:
+            source_central = message.source_central
+            event_id = message.event_id
+            data = message.data
+            plate_id = data.get("plate_id")
+            location = data.get("location")
+            location_time = data.get("location_time")
+            is_anomaly = data.get("is_anomaly", False)
+
+            print(f"[P2P] Received LOCATION_UPDATE from {source_central}: {plate_id} at {location}")
+
+            # Check if vehicle is in parking lot
+            vehicle = self.db.find_vehicle_in_parking(plate_id)
+
+            if vehicle:
+                # Vehicle exists → Update location
+                if self.db.update_vehicle_location(plate_id, location, location_time):
+                    print(f"[P2P] Updated location for {plate_id}: {location}")
+
+                    # Broadcast to frontend (use history_update so frontend reloads)
+                    await self._emit_history_update({
+                        "type": "history_update",
+                        "action": "location_updated",
+                        "plate_id": plate_id,
+                        "location": location,
+                        "location_time": location_time
+                    })
+
+                    # Broadcast to Edges
+                    await self._broadcast_to_edges({
+                        "type": "LOCATION_UPDATE",
+                        "event_id": event_id,
+                        "data": {
+                            "plate_id": plate_id,
+                            "location": location,
+                            "location_time": location_time
+                        }
+                    })
+                else:
+                    print(f"[P2P] Failed to update location for {plate_id}")
+            else:
+                # Vehicle not found → Auto-create entry (anomaly)
+                entry_id = self.db.create_entry_from_parking_lot(
+                    event_id=event_id,
+                    source_central=source_central,
+                    edge_id=data.get("edge_id", "unknown"),
+                    plate_id=plate_id,
+                    plate_view=plate_id,  # Use plate_id as display if no plate_view
+                    entry_time=location_time,
+                    camera_name=f"{source_central}/{location}",
+                    location=location,
+                    location_time=location_time
+                )
+                if entry_id:
+                    print(f"⚠️ [P2P] Auto-created entry for {plate_id} (ANOMALY)")
+
+                    # Broadcast to frontend (use history_update so frontend reloads)
+                    await self._emit_history_update({
+                        "type": "history_update",
+                        "action": "entry_created",
+                        "plate_id": plate_id,
+                        "is_anomaly": True
+                    })
+
+                    # Broadcast to Edges
+                    await self._broadcast_to_edges({
+                        "type": "ENTRY",
+                        "event_id": event_id,
+                        "data": {
+                            "plate_id": plate_id,
+                            "is_anomaly": True,
+                            "location": location,
+                            "location_time": location_time
+                        }
+                    })
+
+        except Exception as e:
+            print(f"Error handling LOCATION_UPDATE: {e}")
             import traceback
             traceback.print_exc()
 

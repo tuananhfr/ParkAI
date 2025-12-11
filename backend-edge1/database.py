@@ -122,12 +122,31 @@ class Database:
                 ON entries(event_id)
             """)
 
+            # Migration: Add location tracking columns for PARKING_LOT camera
+            try:
+                cursor.execute("ALTER TABLE entries ADD COLUMN last_location TEXT")
+                print("[Database] Added last_location column to entries table")
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                cursor.execute("ALTER TABLE entries ADD COLUMN last_location_time TEXT")
+                print("[Database] Added last_location_time column to entries table")
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                cursor.execute("ALTER TABLE entries ADD COLUMN is_anomaly INTEGER DEFAULT 0")
+                print("[Database] Added is_anomaly column to entries table")
+            except sqlite3.OperationalError:
+                pass
+
             conn.commit()
             conn.close()
 
 
     def add_entry(self, plate_id, plate_view, camera_id, camera_name,
-                  confidence, source, status="IN"):
+                  confidence, source, status="IN", event_id=None):
         """
         Thêm entry VÀO
 
@@ -141,12 +160,14 @@ class Database:
 
             cursor.execute("""
                 INSERT INTO entries (
+                    event_id,
                     plate_id, plate_view,
                     entry_time, entry_camera_id, entry_camera_name,
                     entry_confidence, entry_source,
                     status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
+                event_id,
                 plate_id, plate_view,
                 current_time, camera_id, camera_name,
                 confidence, source,
@@ -449,6 +470,52 @@ class Database:
             finally:
                 conn.close()
 
+    def get_entry_event_info(self, history_id):
+        """Lấy event_id và plate info của entry (phục vụ sync)"""
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT id, event_id, plate_id, plate_view FROM entries WHERE id = ?",
+                    (history_id,)
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return None
+                return {
+                    "history_id": row["id"],
+                    "event_id": row["event_id"],
+                    "plate_id": row["plate_id"],
+                    "plate_view": row["plate_view"],
+                }
+            except Exception as e:
+                print(f"Error get_entry_event_info (edge): {e}")
+                return None
+            finally:
+                conn.close()
+
+    def find_entry_by_event_id(self, event_id):
+        """Tìm entry theo event_id để map update/delete từ central"""
+        if not event_id:
+            return None
+        with self.lock:
+            conn = self._get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT * FROM entries WHERE event_id = ? LIMIT 1",
+                    (event_id,)
+                )
+                row = cursor.fetchone()
+                return dict(row) if row else None
+            except Exception as e:
+                print(f"Error find_entry_by_event_id (edge): {e}")
+                return None
+            finally:
+                conn.close()
+
     def get_history_changes(self, limit=100, offset=0, history_id=None):
         """Get lịch sử thay đổi (giống central)"""
         import json
@@ -557,3 +624,91 @@ class Database:
             conn.close()
 
             return rows_updated > 0
+
+    def find_vehicle_in_parking(self, plate_id):
+        """
+        Find vehicle currently in parking lot (status = IN)
+        Returns entry dict or None
+        """
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, plate_id, plate_view, entry_time, status,
+                       last_location, last_location_time, is_anomaly
+                FROM entries
+                WHERE plate_id = ? AND status = 'IN'
+                ORDER BY entry_time DESC
+                LIMIT 1
+            """, (plate_id,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    "id": row[0],
+                    "plate_id": row[1],
+                    "plate_view": row[2],
+                    "entry_time": row[3],
+                    "status": row[4],
+                    "last_location": row[5],
+                    "last_location_time": row[6],
+                    "is_anomaly": row[7]
+                }
+            return None
+
+    def update_vehicle_location(self, plate_id, location, location_time):
+        """
+        Update location for vehicle currently in parking lot
+        Returns True if updated, False if vehicle not in parking
+        """
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE entries
+                SET last_location = ?,
+                    last_location_time = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE plate_id = ? AND status = 'IN'
+            """, (location, location_time, plate_id))
+
+            rows_updated = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            return rows_updated > 0
+
+    def create_entry_from_parking_lot(self, event_id, plate_id, plate_view,
+                                       entry_time, camera_name, location, location_time):
+        """
+        Auto-create entry when vehicle detected by PARKING_LOT camera but not in DB
+        Mark as anomaly (is_anomaly = 1)
+        """
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO entries (
+                    event_id, plate_id, plate_view,
+                    entry_time, entry_camera_name, entry_confidence, entry_source,
+                    last_location, last_location_time,
+                    status, is_anomaly,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (
+                event_id, plate_id, plate_view,
+                entry_time, f"Auto-detected: {camera_name}", 0.0, "parking_lot_auto",
+                location, location_time,
+                "IN", 1  # is_anomaly = 1 (bất thường)
+            ))
+
+            entry_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+            return entry_id

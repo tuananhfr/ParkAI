@@ -33,7 +33,11 @@ def get_sync_state_endpoint():
         }
     """
     if not _database:
-        raise HTTPException(status_code=500, detail="Database not initialized")
+        # Return empty sync state if database not initialized yet
+        return JSONResponse({
+            "success": True,
+            "sync_state": []
+        })
 
     try:
         sync_state = _database.get_sync_state()

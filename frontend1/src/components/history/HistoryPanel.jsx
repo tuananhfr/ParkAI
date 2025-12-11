@@ -384,13 +384,17 @@ const HistoryPanel = ({ backendUrl }) => {
                               <div>
                                 <strong>Vào:</strong>{" "}
                                 {change.old_data.entry_time
-                                  ? formatTime(new Date(change.old_data.entry_time))
+                                  ? formatTime(
+                                      new Date(change.old_data.entry_time)
+                                    )
                                   : "N/A"}
                               </div>
                               {change.old_data.exit_time && (
                                 <div>
                                   <strong>Ra:</strong>{" "}
-                                  {formatTime(new Date(change.old_data.exit_time))}
+                                  {formatTime(
+                                    new Date(change.old_data.exit_time)
+                                  )}
                                 </div>
                               )}
                               {change.old_data.fee > 0 && (
@@ -427,6 +431,11 @@ const HistoryPanel = ({ backendUrl }) => {
                 <div
                   key={entry.id}
                   className="list-group-item p-2 border-bottom"
+                  style={{
+                    backgroundColor: entry.is_anomaly
+                      ? "#fff3cd"
+                      : "transparent",
+                  }}
                 >
                   <div className="row g-1">
                     {/* Thông tin chính */}
@@ -437,6 +446,12 @@ const HistoryPanel = ({ backendUrl }) => {
                           className="fw-bold text-primary"
                           style={{ fontSize: "1rem" }}
                         >
+                          {entry.is_anomaly === 1 && (
+                            <i
+                              className="bi bi-exclamation-triangle-fill text-warning me-1"
+                              title="Tự động tạo từ camera trong bãi"
+                            ></i>
+                          )}
                           <i className="bi bi-123 me-1"></i>
                           {entry.plate_view || entry.plate_id}
                         </div>
@@ -491,6 +506,29 @@ const HistoryPanel = ({ backendUrl }) => {
                           </div>
                         ) : null}
                       </div>
+
+                      {/* Vị trí (nếu có) */}
+                      {entry.last_location && (
+                        <div className="mb-1">
+                          <div
+                            className="text-muted"
+                            style={{ fontSize: "0.7rem" }}
+                          >
+                            <i
+                              className="bi bi-geo-alt-fill text-primary me-1"
+                              style={{ fontSize: "0.65rem" }}
+                            ></i>
+                            Vị trí: {entry.last_location}
+                            {entry.last_location_time && (
+                              <span className="ms-1">
+                                (
+                                {formatTime(new Date(entry.last_location_time))}
+                                )
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Loại khách */}
                       <div className="mb-1">
@@ -676,4 +714,3 @@ const HistoryPanel = ({ backendUrl }) => {
 };
 
 export default HistoryPanel;
-

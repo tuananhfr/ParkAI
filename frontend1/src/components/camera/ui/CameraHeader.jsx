@@ -24,10 +24,18 @@ const CameraHeader = ({ cameraInfo, isConnected, isFullscreen }) => {
         {cameraInfo && (
           <span
             className={`badge ${
-              cameraInfo.type === "ENTRY" ? "bg-success" : "bg-danger"
+              cameraInfo.type === "ENTRY"
+                ? "bg-success"
+                : cameraInfo.type === "EXIT"
+                ? "bg-danger"
+                : "bg-secondary"
             }`}
           >
-            {cameraInfo.type === "ENTRY" ? "VÀO" : "RA"}
+            {cameraInfo.type === "ENTRY"
+              ? "VÀO"
+              : cameraInfo.type === "EXIT"
+              ? "RA"
+              : "TRONG BÃI"}
           </span>
         )}
 

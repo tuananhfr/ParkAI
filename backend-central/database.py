@@ -148,12 +148,16 @@ class CentralDatabase:
 
         def add_col(name, ddl):
             if name not in existing_cols:
-                cursor.execute(f"ALTER TABLE history ADD COLUMN {ddl}")
+                cursor.execute(f"ALTER TABLE history ADD COLUMN {name} {ddl}")
 
         add_col("event_id", "TEXT")
         add_col("source_central", "TEXT")
         add_col("edge_id", "TEXT")
         add_col("sync_status", "TEXT DEFAULT 'LOCAL'")
+        # Location tracking columns for PARKING_LOT camera
+        add_col("last_location", "TEXT")
+        add_col("last_location_time", "TEXT")
+        add_col("is_anomaly", "INTEGER DEFAULT 0")
 
     def add_vehicle_entry(
         self,
@@ -559,6 +563,40 @@ class CentralDatabase:
             finally:
                 conn.close()
 
+    def get_history_entry_by_id(self, history_id):
+        """Lấy 1 bản ghi history theo id (kèm event_id)"""
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT * FROM history WHERE id = ? LIMIT 1", (history_id,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+            except Exception as e:
+                print(f"Error get_history_entry_by_id: {e}")
+                return None
+            finally:
+                conn.close()
+
+    def find_history_by_event_id(self, event_id):
+        """Tìm bản ghi history theo event_id (dùng cho sync từ edge/p2p)"""
+        if not event_id:
+            return None
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT * FROM history WHERE event_id = ? LIMIT 1", (event_id,))
+                row = cursor.fetchone()
+                return dict(row) if row else None
+            except Exception as e:
+                print(f"Error find_history_by_event_id: {e}")
+                return None
+            finally:
+                conn.close()
+
     def get_history_changes(self, limit=100, offset=0, history_id=None):
         """Get lịch sử thay đổi"""
         import json
@@ -599,3 +637,97 @@ class CentralDatabase:
                 changes.append(change)
 
             return changes
+
+    def find_vehicle_in_parking(self, plate_id):
+        """
+        Find vehicle currently in parking lot (status = IN)
+        Returns entry dict or None
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, plate_id, plate_view, entry_time, status,
+                       last_location, last_location_time, is_anomaly
+                FROM history
+                WHERE plate_id = ? AND status = 'IN'
+                ORDER BY entry_time DESC
+                LIMIT 1
+            """, (plate_id,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                return {
+                    "id": row[0],
+                    "plate_id": row[1],
+                    "plate_view": row[2],
+                    "entry_time": row[3],
+                    "status": row[4],
+                    "last_location": row[5],
+                    "last_location_time": row[6],
+                    "is_anomaly": row[7]
+                }
+            return None
+
+    def update_vehicle_location(self, plate_id, location, location_time):
+        """
+        Update location for vehicle currently in parking lot
+        Returns True if updated, False if vehicle not in parking
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                UPDATE history
+                SET last_location = ?,
+                    last_location_time = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE plate_id = ? AND status = 'IN'
+            """, (location, location_time, plate_id))
+
+            rows_updated = cursor.rowcount
+            conn.commit()
+            conn.close()
+
+            return rows_updated > 0
+
+    def create_entry_from_parking_lot(self, event_id, source_central, edge_id,
+                                       plate_id, plate_view, entry_time,
+                                       camera_name, location, location_time):
+        """
+        Auto-create entry when vehicle detected by PARKING_LOT camera but not in DB
+        Mark as anomaly (is_anomaly = 1)
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO history (
+                    event_id, source_central, edge_id,
+                    plate_id, plate_view,
+                    entry_time, entry_camera_name, entry_confidence, entry_source,
+                    last_location, last_location_time,
+                    status, is_anomaly, sync_status,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (
+                event_id, source_central, edge_id,
+                plate_id, plate_view,
+                entry_time, f"Auto-detected: {camera_name}", 0.0, "parking_lot_auto",
+                location, location_time,
+                "IN", 1, "P2P"  # is_anomaly = 1, sync_status = P2P
+            ))
+
+            entry_id = cursor.lastrowid
+            conn.commit()
+            conn.close()
+
+            return entry_id

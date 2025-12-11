@@ -8,7 +8,8 @@ from .protocol import (
     create_entry_confirmed_message,
     create_exit_message,
     create_history_update_message,
-    create_history_delete_message
+    create_history_delete_message,
+    create_location_update_message
 )
 
 
@@ -93,6 +94,7 @@ class P2PParkingBroadcaster:
     async def broadcast_exit(
         self,
         event_id: str,
+        plate_id: str,
         exit_edge: str,
         exit_time: str,
         fee: int,
@@ -110,6 +112,7 @@ class P2PParkingBroadcaster:
             message = create_exit_message(
                 source_central=self.central_id,
                 event_id=event_id,
+                plate_id=plate_id,
                 exit_central=self.central_id,
                 exit_edge=exit_edge,
                 exit_time=exit_time,
@@ -174,3 +177,35 @@ class P2PParkingBroadcaster:
 
         except Exception as e:
             print(f"Error broadcasting history delete: {e}")
+
+    async def broadcast_location_update(
+        self,
+        event_id: str,
+        plate_id: str,
+        location: str,
+        location_time: str,
+        is_anomaly: bool = False
+    ):
+        """
+        Broadcast LOCATION_UPDATE event (PARKING_LOT camera detection)
+
+        Call này khi PARKING_LOT camera detect xe và update location
+        """
+        if not self.p2p_manager or self.p2p_manager.config.is_standalone():
+            return
+
+        try:
+            message = create_location_update_message(
+                source_central=self.central_id,
+                event_id=event_id,
+                plate_id=plate_id,
+                location=location,
+                location_time=location_time,
+                is_anomaly=is_anomaly
+            )
+
+            await self.p2p_manager.broadcast(message)
+            print(f"Broadcasted LOCATION_UPDATE: {plate_id} at {location}")
+
+        except Exception as e:
+            print(f"Error broadcasting location update: {e}")

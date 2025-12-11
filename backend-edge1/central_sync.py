@@ -6,21 +6,26 @@ import requests
 import threading
 import time
 from queue import Queue
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 import uuid
 import json
 import websocket  # websocket-client library
+import asyncio
 
 
 class CentralSyncService:
     """Service sync events lên central server"""
 
-    def __init__(self, central_url: str, camera_id: int, camera_name: str, camera_type: str, parking_manager=None):
+    def __init__(self, central_url: str, camera_id: int, camera_name: str, camera_type: str, parking_manager=None,
+                 event_loop: Optional[asyncio.AbstractEventLoop] = None,
+                 history_broadcaster: Optional[Callable[[dict], Any]] = None):
         self.central_url = central_url
         self.camera_id = camera_id
         self.camera_name = camera_name
         self.camera_type = camera_type
         self.parking_manager = parking_manager  # For saving incoming events to local DB
+        self.loop = event_loop
+        self.history_broadcaster = history_broadcaster
 
         self.event_queue = Queue()
         self.running = False
@@ -69,15 +74,18 @@ class CentralSyncService:
         Queue event để gửi lên central
 
         Args:
-            event_type: "ENTRY" | "EXIT" | "DETECTION"
+            event_type: "ENTRY" | "EXIT" | "DETECTION" | "LOCATION_UPDATE"
             data: Event data (plate_text, timestamp, confidence, etc.)
                   Nếu data có event_id sẵn thì dùng, nếu không thì tạo mới
         """
         plate_id = data.get("plate_id") or data.get("plate_text") or "UNKNOWN"
 
-        # Dùng event_id có sẵn nếu có, nếu không thì tạo mới
+        # Dùng event_id có sẵn nếu có
         event_id = data.get("event_id")
-        if not event_id:
+
+        # Chỉ tạo event_id mới cho ENTRY và LOCATION_UPDATE
+        # Với EXIT, KHÔNG tạo mới (để Central tự lấy từ entry record)
+        if not event_id and event_type in ["ENTRY", "LOCATION_UPDATE"]:
             event_id = self._generate_event_id(plate_id)
 
         event = {
@@ -150,7 +158,7 @@ class CentralSyncService:
                 # Pong response
                 pass
 
-            elif msg_type in ["ENTRY", "EXIT", "DETECTION", "UPDATE", "DELETE"]:
+            elif msg_type in ["ENTRY", "EXIT", "DETECTION", "UPDATE", "DELETE", "LOCATION_UPDATE"]:
                 # Event from Central (from other nodes) - save to local DB
                 self._handle_incoming_event(data)
 
@@ -216,22 +224,68 @@ class CentralSyncService:
             elif event_type == "UPDATE":
                 # Admin updated record from Central
                 history_id = event.get("history_id")
+                event_id = event.get("event_id") or data.get("event_id")
                 new_plate_text = data.get("plate_text", "")
                 new_plate_view = data.get("plate_view", "")
 
-                if self.parking_manager.db.update_history_entry(history_id, new_plate_text, new_plate_view):
-                    print(f"[Edge Sync] Updated record {history_id} in local DB")
+                updated = False
+
+                # Try update by history_id
+                if history_id and self.parking_manager.db.update_history_entry(history_id, new_plate_text, new_plate_view):
+                    updated = True
+                elif event_id:
+                    # Fallback: find by event_id (for PARKING_LOT anomaly records)
+                    entry = self.parking_manager.db.find_entry_by_event_id(event_id)
+                    if entry and self.parking_manager.db.update_history_entry(entry["id"], new_plate_text, new_plate_view):
+                        history_id = entry["id"]
+                        updated = True
+
+                if updated:
+                    print(f"[Edge Sync] Updated record {history_id or event_id} in local DB")
+                    self._broadcast_history_update({"type": "updated", "history_id": history_id or event_id})
                 else:
-                    print(f"[Edge Sync] Failed to update record {history_id}")
+                    print(f"[Edge Sync] Failed to update record {history_id or event_id}")
 
             elif event_type == "DELETE":
                 # Admin deleted record from Central
                 history_id = event.get("history_id")
+                event_id = event.get("event_id") or data.get("event_id")
 
-                if self.parking_manager.db.delete_history_entry(history_id):
-                    print(f"[Edge Sync] Deleted record {history_id} from local DB")
+                deleted = False
+                # Try delete by history_id
+                if history_id and self.parking_manager.db.delete_history_entry(history_id):
+                    deleted = True
+                elif event_id:
+                    # Fallback: find by event_id
+                    entry = self.parking_manager.db.find_entry_by_event_id(event_id)
+                    if entry and self.parking_manager.db.delete_history_entry(entry["id"]):
+                        history_id = entry["id"]
+                        deleted = True
+
+                if deleted:
+                    print(f"[Edge Sync] Deleted record {history_id or event_id} from local DB")
+                    self._broadcast_history_update({"type": "deleted", "history_id": history_id or event_id})
                 else:
-                    print(f"[Edge Sync] Failed to delete record {history_id}")
+                    print(f"[Edge Sync] Failed to delete record {history_id or event_id}")
+
+            elif event_type == "LOCATION_UPDATE":
+                # Location update from PARKING_LOT camera (from other edge via Central)
+                plate_id = data.get("plate_id")
+                location = data.get("location")
+                location_time = data.get("location_time")
+
+                # Check if vehicle is in local parking lot
+                vehicle = self.parking_manager.db.find_vehicle_in_parking(plate_id)
+
+                if vehicle:
+                    # Vehicle exists → Update location
+                    if self.parking_manager.db.update_vehicle_location(plate_id, location, location_time):
+                        print(f"[Edge Sync] Updated location for {plate_id}: {location}")
+                    else:
+                        print(f"[Edge Sync] Failed to update location for {plate_id}")
+                else:
+                    # Vehicle not in parking → Log but don't create (might be at different location)
+                    print(f"[Edge Sync] LOCATION_UPDATE for {plate_id} - vehicle not in local parking")
 
         except Exception as e:
             print(f"[Edge Sync] Error handling incoming event: {e}")
@@ -260,6 +314,17 @@ class CentralSyncService:
             except Exception as e:
                 # Queue empty - continue
                 continue
+
+    def _broadcast_history_update(self, payload: dict):
+        """
+        Broadcast history update tới UI Edge (WebSocket clients).
+        Called từ thread sync, nên dùng run_coroutine_threadsafe.
+        """
+        if self.history_broadcaster and self.loop:
+            try:
+                asyncio.run_coroutine_threadsafe(self.history_broadcaster(payload), self.loop)
+            except Exception as e:
+                print(f"[Edge Sync] Failed to broadcast history update to UI: {e}")
 
     def _send_to_central(self, event: Dict[str, Any]) -> bool:
         """

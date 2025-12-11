@@ -520,6 +520,7 @@ async def startup():
         p2p_manager.on_vehicle_entry_pending = p2p_event_handler.handle_vehicle_entry_pending
         p2p_manager.on_vehicle_entry_confirmed = p2p_event_handler.handle_vehicle_entry_confirmed
         p2p_manager.on_vehicle_exit = p2p_event_handler.handle_vehicle_exit
+        p2p_manager.on_location_update = p2p_event_handler.handle_location_update
         p2p_manager.on_history_update = p2p_event_handler.handle_history_update
         p2p_manager.on_history_delete = p2p_event_handler.handle_history_delete
 
@@ -615,6 +616,11 @@ async def receive_edge_event(request: Request):
         )
 
         if result['success']:
+            # Ensure event_id present for EXIT (must reuse existing event_id; do NOT regenerate)
+            if result.get('action') == 'EXIT':
+                result_event_id = result.get('event_id') or event_id
+                result['event_id'] = result_event_id
+
             # Clean result de dam bao JSON serializable (loai bo bytes, BLOB objects)
             clean_result = {}
             for k, v in result.items():
@@ -640,6 +646,7 @@ async def receive_edge_event(request: Request):
                     elif result['action'] == 'EXIT' and result.get('history_id'):
                         asyncio.create_task(p2p_broadcaster.broadcast_exit(
                             event_id=result.get('event_id'),
+                            plate_id=result.get('plate_id'),
                             exit_edge=camera_id,
                             exit_time=result.get('exit_time', ''),
                             fee=result.get('fee', 0),
@@ -742,10 +749,19 @@ async def index():
 @app.get("/api/status")
 async def status():
     """Get system status"""
-    global camera_registry, parking_state
+    global camera_registry, parking_state, database
 
-    camera_status = _enrich_camera_status(camera_registry.get_camera_status())
-    parking_stats = database.get_stats()
+    # Check if camera_registry is initialized
+    if camera_registry:
+        camera_status = _enrich_camera_status(camera_registry.get_camera_status())
+    else:
+        camera_status = {"cameras": [], "edges": []}
+
+    # Check if database is initialized
+    if database:
+        parking_stats = database.get_stats()
+    else:
+        parking_stats = {"total": 0, "in_parking": 0, "total_out": 0}
 
     return {
         "success": True,
@@ -759,7 +775,11 @@ async def get_cameras():
     """Get all cameras"""
     global camera_registry
 
-    status = _enrich_camera_status(camera_registry.get_camera_status())
+    # Check if camera_registry is initialized
+    if camera_registry:
+        status = _enrich_camera_status(camera_registry.get_camera_status())
+    else:
+        status = {"cameras": [], "edges": []}
 
     return JSONResponse({
         "success": True,
@@ -772,7 +792,11 @@ async def get_parking_state():
     """Get current parking state (vehicles IN parking)"""
     global parking_state
 
-    state = parking_state.get_parking_state()
+    # Check if parking_state is initialized
+    if parking_state:
+        state = parking_state.get_parking_state()
+    else:
+        state = {"vehicles": [], "total": 0}
 
     return JSONResponse({
         "success": True,
@@ -792,6 +816,15 @@ async def get_parking_history(
 ):
     """Get vehicle history with optional search by plate number"""
     global database
+
+    # Check if database is initialized
+    if not database:
+        return JSONResponse({
+            "success": True,
+            "count": 0,
+            "stats": {"total": 0, "in_parking": 0, "total_out": 0},
+            "history": []
+        })
 
     history = database.get_history(
         limit=limit,
@@ -817,7 +850,20 @@ async def update_history_entry(history_id: int, request: Request):
     """Update biển số trong history entry"""
     global database
 
+    # Check if database is initialized
+    if not database:
+        return JSONResponse({
+            "success": False,
+            "error": "Database chưa được khởi tạo"
+        }, status_code=503)
+
     try:
+        # Lấy record để lấy event_id (phục vụ sync xuống Edge)
+        record = database.get_history_entry_by_id(history_id)
+        event_id = record.get("event_id") if record else None
+        plate_view_old = record.get("plate_view") if record else None
+        plate_id_old = record.get("plate_id") if record else None
+
         data = await request.json()
         new_plate_id = data.get("plate_id")
         new_plate_view = data.get("plate_view")
@@ -839,14 +885,15 @@ async def update_history_entry(history_id: int, request: Request):
             await broadcast_history_update({"type": "updated", "history_id": history_id})
 
             # Broadcast to Edges (đồng bộ DB)
-            # TODO: Cần lấy thông tin đầy đủ của record để gửi cho Edge
-            # Hiện tại chỉ gửi notification, Edge cần implement logic nhận update
             update_event = {
                 "type": "UPDATE",
                 "history_id": history_id,
+                "event_id": event_id,
                 "data": {
                     "plate_text": new_plate_id,
-                    "plate_view": new_plate_view
+                    "plate_view": new_plate_view,
+                    "plate_text_old": plate_id_old,
+                    "plate_view_old": plate_view_old,
                 }
             }
             await broadcast_to_edges(update_event)
@@ -881,7 +928,20 @@ async def delete_history_entry(history_id: int):
     """Delete history entry"""
     global database
 
+    # Check if database is initialized
+    if not database:
+        return JSONResponse({
+            "success": False,
+            "error": "Database chưa được khởi tạo"
+        }, status_code=503)
+
     try:
+        # Lấy record trước khi xóa để giữ event_id & plate info cho Edge
+        record = database.get_history_entry_by_id(history_id)
+        event_id = record.get("event_id") if record else None
+        plate_id = record.get("plate_id") if record else None
+        plate_view = record.get("plate_view") if record else None
+
         success = database.delete_history_entry(history_id)
 
         if success:
@@ -891,7 +951,12 @@ async def delete_history_entry(history_id: int):
             # Broadcast to Edges (đồng bộ DB)
             delete_event = {
                 "type": "DELETE",
-                "history_id": history_id
+                "history_id": history_id,
+                "event_id": event_id,
+                "data": {
+                    "plate_text": plate_id,
+                    "plate_view": plate_view
+                }
             }
             await broadcast_to_edges(delete_event)
 
@@ -927,6 +992,14 @@ async def get_history_changes(
     """Get lịch sử thay đổi"""
     global database
 
+    # Check if database is initialized
+    if not database:
+        return JSONResponse({
+            "success": True,
+            "count": 0,
+            "changes": []
+        })
+
     changes = database.get_history_changes(
         limit=limit,
         offset=offset,
@@ -944,6 +1017,15 @@ async def get_history_changes(
 async def get_stats():
     """Get statistics"""
     global database
+
+    # Check if database is initialized
+    if not database:
+        return JSONResponse({
+            "success": True,
+            "total": 0,
+            "in_parking": 0,
+            "total_out": 0
+        })
 
     stats = database.get_stats()
 
@@ -1435,7 +1517,7 @@ async def sync_edge_config(request: Request):
                 "edge_cameras": current_edge_cameras
             }
             success = config_manager.update_config(update_config_data)
-            
+
             if success:
                 # Reload config
                 import importlib
@@ -1444,10 +1526,26 @@ async def sync_edge_config(request: Request):
                     del sys.modules['config']
                 import config
                 importlib.reload(config)
-                
+
+                # Update camera_registry database with new cameras
+                if database and camera_registry:
+                    for cam_id_int, cam_config in current_edge_cameras.items():
+                        try:
+                            database.upsert_camera(
+                                camera_id=int(cam_id_int) if isinstance(cam_id_int, str) else cam_id_int,
+                                name=cam_config.get("name", f"Camera {cam_id_int}"),
+                                camera_type=cam_config.get("camera_type", "ENTRY"),
+                                status="offline",  # Will be updated by heartbeat
+                                events_sent=0,
+                                events_failed=0
+                            )
+                            print(f"[Edge Sync] Updated camera {cam_id_int} in database")
+                        except Exception as e:
+                            print(f"[Edge Sync] Error updating camera {cam_id_int} in database: {e}")
+
                 # Broadcast camera update
                 await broadcast_camera_update()
-                
+
                 return JSONResponse({
                     "success": True,
                     "message": "Edge camera config synced successfully"
@@ -1773,7 +1871,7 @@ async def websocket_edge_connection(websocket: WebSocket):
                     # Respond to ping
                     await websocket.send_json({"type": "pong"})
 
-                elif msg_type in ["ENTRY", "EXIT", "DETECTION", "UPDATE", "DELETE"]:
+                elif msg_type in ["ENTRY", "EXIT", "DETECTION", "UPDATE", "DELETE", "LOCATION_UPDATE"]:
                     # Event from Edge - process it
                     await handle_edge_websocket_event(edge_id, message)
 
@@ -1811,6 +1909,11 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
     """
     global parking_state, database, p2p_broadcaster
 
+    # Check if database is initialized
+    if not database:
+        print(f"[Edge WebSocket] Database not initialized, ignoring event from {edge_id}")
+        return
+
     try:
         event_type = event.get('type')
         camera_id = event.get('camera_id', edge_id)
@@ -1825,10 +1928,20 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
         if event_type == "UPDATE":
             # Admin updated record on Edge
             history_id = data.get("history_id")  # history_id ở trong data!
+            event_id = data.get("event_id")
             new_plate_text = data.get("plate_text", "")
             new_plate_view = data.get("plate_view", "")
 
-            if database.update_history_entry(history_id, new_plate_text, new_plate_view):
+            # Nếu không có history_id khớp, thử map bằng event_id (trường hợp PARKING_LOT)
+            if history_id and not database.update_history_entry(history_id, new_plate_text, new_plate_view):
+                history_id = None
+
+            if not history_id and event_id:
+                record = database.find_history_by_event_id(event_id)
+                if record:
+                    history_id = record.get("id")
+
+            if history_id and database.update_history_entry(history_id, new_plate_text, new_plate_view):
                 print(f"[Edge WebSocket] Updated record {history_id} from edge {edge_id}")
                 # Broadcast to frontend
                 await broadcast_history_update({"type": "updated", "history_id": history_id})
@@ -1836,6 +1949,7 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
                 update_event = {
                     "type": "UPDATE",
                     "history_id": history_id,
+                    "event_id": event_id,
                     "data": {
                         "plate_text": new_plate_text,
                         "plate_view": new_plate_view
@@ -1857,15 +1971,26 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
         elif event_type == "DELETE":
             # Admin deleted record on Edge
             history_id = data.get("history_id")  # history_id ở trong data!
+            event_id = data.get("event_id")
 
-            if database.delete_history_entry(history_id):
+            # Nếu không tìm thấy theo history_id, thử map theo event_id (PARKING_LOT)
+            if history_id and not database.delete_history_entry(history_id):
+                history_id = None
+
+            if not history_id and event_id:
+                record = database.find_history_by_event_id(event_id)
+                if record:
+                    history_id = record.get("id")
+
+            if history_id and database.delete_history_entry(history_id):
                 print(f"[Edge WebSocket] Deleted record {history_id} from edge {edge_id}")
                 # Broadcast to frontend
                 await broadcast_history_update({"type": "deleted", "history_id": history_id})
                 # Broadcast to other Edges (exclude sender)
                 delete_event = {
                     "type": "DELETE",
-                    "history_id": history_id
+                    "history_id": history_id,
+                    "event_id": event_id
                 }
                 await broadcast_to_edges(delete_event)
                 # Broadcast to P2P peers (other Centrals)
@@ -1876,6 +2001,190 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
                         ))
                     except Exception as e:
                         print(f"[Edge WebSocket] Error broadcasting P2P delete: {e}")
+            return
+
+        elif event_type == "LOCATION_UPDATE":
+            # Location update from PARKING_LOT camera
+            plate_id = data.get("plate_id")
+            location = data.get("location")
+            location_time = data.get("location_time")
+            is_anomaly = data.get("is_anomaly", False)
+
+            print(f"[Edge WebSocket] LOCATION_UPDATE from edge {edge_id}: {plate_id} at {location}")
+
+            # Check if vehicle is in parking lot
+            vehicle = database.find_vehicle_in_parking(plate_id)
+
+            if vehicle:
+                # Vehicle exists → Update location
+                success = database.update_vehicle_location(plate_id, location, location_time)
+                if success:
+                    print(f"[Edge WebSocket] Updated location for {plate_id}: {location}")
+                    # Broadcast to frontend (use history_update so frontend reloads)
+                    await broadcast_history_update({
+                        "type": "history_update",
+                        "action": "location_updated",
+                        "plate_id": plate_id,
+                        "location": location,
+                        "location_time": location_time
+                    })
+                    # Broadcast to other Edges
+                    location_event = {
+                        "type": "LOCATION_UPDATE",
+                        "event_id": event_id,
+                        "data": {
+                            "plate_id": plate_id,
+                            "location": location,
+                            "location_time": location_time
+                        }
+                    }
+                    await broadcast_to_edges(location_event)
+                    # Broadcast to P2P peers
+                    if p2p_broadcaster:
+                        asyncio.create_task(p2p_broadcaster.broadcast_location_update(
+                            event_id=event_id,
+                            plate_id=plate_id,
+                            location=location,
+                            location_time=location_time,
+                            is_anomaly=False
+                        ))
+            else:
+                # Vehicle not found → Auto-create entry (anomaly)
+                entry_time = location_time  # Use detection time as entry time
+                entry_id = database.create_entry_from_parking_lot(
+                    event_id=event_id,
+                    source_central=None,  # Local edge
+                    edge_id=edge_id,
+                    plate_id=plate_id,
+                    plate_view=data.get("plate_text", plate_id),
+                    entry_time=entry_time,
+                    camera_name=f"{edge_id}/{camera_name}",
+                    location=location,
+                    location_time=location_time
+                )
+                if entry_id:
+                    print(f"⚠️ [Edge WebSocket] Auto-created entry for {plate_id} (ANOMALY)")
+                    # Broadcast to frontend
+                    await broadcast_history_update({
+                        "type": "entry_created",
+                        "plate_id": plate_id,
+                        "is_anomaly": True
+                    })
+                    # Broadcast to other Edges
+                    entry_event = {
+                        "type": "ENTRY",
+                        "event_id": event_id,
+                        "camera_id": edge_id,
+                        "camera_name": f"{edge_id}/{camera_name}",
+                        "data": {
+                            "plate_id": plate_id,
+                            "plate_text": data.get("plate_text", plate_id),
+                            "is_anomaly": True,
+                            "location": location,
+                            "location_time": location_time
+                        }
+                    }
+                    await broadcast_to_edges(entry_event)
+                    # Broadcast to P2P peers (anomaly case)
+                    if p2p_broadcaster:
+                        asyncio.create_task(p2p_broadcaster.broadcast_location_update(
+                            event_id=event_id,
+                            plate_id=plate_id,
+                            location=location,
+                            location_time=location_time,
+                            is_anomaly=True
+                        ))
+            return
+
+        elif event_type == "ENTRY" and camera_type == "PARKING_LOT":
+            # Auto entry from parking-lot camera should be treated as anomaly entry/location update
+            plate_id = data.get("plate_id") or data.get("plate_text")
+            location = data.get("location") or camera_name
+            location_time = data.get("location_time")
+            is_anomaly = data.get("is_anomaly", True)
+
+            print(f"[Edge WebSocket] PARKING_LOT ENTRY from edge {edge_id}: {plate_id} at {location} (anomaly={is_anomaly})")
+
+            # If vehicle already in parking -> update location instead of creating new IN record
+            vehicle = database.find_vehicle_in_parking(plate_id)
+            if vehicle:
+                if not location_time:
+                    location_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                success = database.update_vehicle_location(plate_id, location, location_time)
+                if success:
+                    await broadcast_history_update({
+                        "type": "history_update",
+                        "action": "location_updated",
+                        "plate_id": plate_id,
+                        "location": location,
+                        "location_time": location_time
+                    })
+                    location_event = {
+                        "type": "LOCATION_UPDATE",
+                        "event_id": event_id,
+                        "data": {
+                            "plate_id": plate_id,
+                            "location": location,
+                            "location_time": location_time
+                        }
+                    }
+                    await broadcast_to_edges(location_event)
+                    if p2p_broadcaster:
+                        asyncio.create_task(p2p_broadcaster.broadcast_location_update(
+                            event_id=event_id,
+                            plate_id=plate_id,
+                            location=location,
+                            location_time=location_time,
+                            is_anomaly=False
+                        ))
+                return
+
+            # Vehicle not found -> create anomaly entry
+            if not location_time:
+                location_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            entry_id = database.create_entry_from_parking_lot(
+                event_id=event_id,
+                source_central=None,
+                edge_id=edge_id,
+                plate_id=plate_id,
+                plate_view=data.get("plate_text", plate_id),
+                entry_time=location_time,
+                camera_name=f"{edge_id}/{camera_name}",
+                location=location,
+                location_time=location_time
+            )
+
+            if entry_id:
+                print(f"⚠️ [Edge WebSocket] Auto-created anomaly entry for {plate_id} from PARKING_LOT camera")
+                await broadcast_history_update({
+                    "type": "entry_created",
+                    "plate_id": plate_id,
+                    "is_anomaly": True
+                })
+                entry_event = {
+                    "type": "ENTRY",
+                    "event_id": event_id,
+                    "camera_id": edge_id,
+                    "camera_name": f"{edge_id}/{camera_name}",
+                    "data": {
+                        "plate_id": plate_id,
+                        "plate_text": data.get("plate_text", plate_id),
+                        "is_anomaly": True,
+                        "location": location,
+                        "location_time": location_time
+                    }
+                }
+                await broadcast_to_edges(entry_event)
+                if p2p_broadcaster:
+                    asyncio.create_task(p2p_broadcaster.broadcast_location_update(
+                        event_id=event_id,
+                        plate_id=plate_id,
+                        location=location,
+                        location_time=location_time,
+                        is_anomaly=True
+                    ))
             return
 
         # Dedupe: if event already exists, skip (for ENTRY/EXIT events)
@@ -1894,6 +2203,15 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
         )
 
         if result['success']:
+            # Ensure event_id present for EXIT (for P2P sync)
+            if result.get('action') == 'EXIT':
+                result_event_id = result.get('event_id') or event_id
+                if not result_event_id and p2p_broadcaster:
+                    result_event_id = p2p_broadcaster.generate_event_id(
+                        data.get("plate_text", "UNKNOWN").replace(" ", "")
+                    )
+                result['event_id'] = result_event_id
+
             print(f"[Edge WebSocket] Event processed successfully: {event_id}")
 
             # Broadcast to P2P peers (other Centrals)
@@ -1912,6 +2230,7 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
                     elif result['action'] == 'EXIT' and result.get('history_id'):
                         asyncio.create_task(p2p_broadcaster.broadcast_exit(
                             event_id=result.get('event_id'),
+                            plate_id=result.get('plate_id'),
                             exit_edge=camera_id,
                             exit_time=result.get('exit_time', ''),
                             fee=result.get('fee', 0),

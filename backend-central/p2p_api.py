@@ -66,7 +66,14 @@ async def get_p2p_config():
         }
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        # Return empty config if P2P manager not initialized yet
+        return JSONResponse({
+            "success": True,
+            "config": {
+                "this_central": {"id": "", "ip": "", "api_port": 8000},
+                "peer_centrals": []
+            }
+        })
 
     try:
         config = _p2p_manager.config.to_dict()
@@ -103,7 +110,10 @@ async def update_p2p_config(config_update: P2PConfigUpdate):
         }
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        return JSONResponse({
+            "success": False,
+            "error": "P2P manager chưa được khởi tạo"
+        }, status_code=503)
 
     try:
         import requests
@@ -223,7 +233,18 @@ async def get_p2p_status():
         }
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        # Return default status if P2P manager not initialized yet
+        return JSONResponse({
+            "success": True,
+            "this_central": "",
+            "running": False,
+            "standalone_mode": True,
+            "total_peers": 0,
+            "connected_peers": 0,
+            "messages_sent": 0,
+            "messages_received": 0,
+            "peers": []
+        })
 
     try:
         stats = _p2p_manager.get_stats()
@@ -248,7 +269,10 @@ async def test_p2p_connection(peer_id: str):
         peer_id: ID của peer cần test
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        return JSONResponse({
+            "success": False,
+            "error": "P2P manager chưa được khởi tạo"
+        }, status_code=503)
 
     try:
         from p2p.protocol import create_heartbeat_message
@@ -300,7 +324,10 @@ async def add_peer(request: AddPeerRequest):
         }
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        return JSONResponse({
+            "success": False,
+            "error": "P2P manager chưa được khởi tạo"
+        }, status_code=503)
 
     try:
         import requests
@@ -431,7 +458,11 @@ async def get_central_info():
         }
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        return JSONResponse({
+            "success": False,
+            "error": "P2P manager chưa được khởi tạo",
+            "info": {"id": "", "ip": "", "api_port": 8000}
+        }, status_code=503)
 
     try:
         config = _p2p_manager.config.to_dict()
@@ -472,7 +503,10 @@ async def register_peer(request: RegisterPeerRequest):
         }
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        return JSONResponse({
+            "success": False,
+            "error": "P2P manager chưa được khởi tạo"
+        }, status_code=503)
 
     try:
         # Get current config
@@ -540,7 +574,10 @@ async def unregister_peer(peer_id: str):
         }
     """
     if not _p2p_manager:
-        raise HTTPException(status_code=500, detail="P2P manager not initialized")
+        return JSONResponse({
+            "success": False,
+            "error": "P2P manager chưa được khởi tạo"
+        }, status_code=503)
 
     try:
         # Get current config

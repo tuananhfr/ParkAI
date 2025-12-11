@@ -526,6 +526,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                               >
                                 <option value="ENTRY">VÀO</option>
                                 <option value="EXIT">RA</option>
+                                <option value="PARKING_LOT">TRONG BÃI</option>
                               </select>
                             </div>
                           </div>
@@ -556,16 +557,6 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                       </div>
                     )}
 
-                    {backendType === "edge" && (
-                      <div className="alert alert-info mb-3">
-                        <i className="bi bi-info-circle me-2"></i>
-                        <strong>Edge Mode:</strong> Camera IP tự động điền là
-                        "localhost" và không thể thay đổi. Nếu muốn kết nối đến
-                        Central Server, vui lòng cấu hình ở tab "IP máy chủ
-                        central".
-                      </div>
-                    )}
-
                     {Object.entries(config.edge_cameras || {})
                       .sort(([a], [b]) => parseInt(a, 10) - parseInt(b, 10))
                       .map(([camId, camConfig]) => (
@@ -581,12 +572,16 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                                   className={`badge ${
                                     camConfig.camera_type === "ENTRY"
                                       ? "bg-success"
-                                      : "bg-danger"
+                                      : camConfig.camera_type === "EXIT"
+                                      ? "bg-danger"
+                                      : "bg-secondary"
                                   } ms-2`}
                                 >
                                   {camConfig.camera_type === "ENTRY"
                                     ? "VÀO"
-                                    : "RA"}
+                                    : camConfig.camera_type === "EXIT"
+                                    ? "RA"
+                                    : "TRONG BÃI"}
                                 </span>
                               </h6>
                               {backendType !== "edge" && (
@@ -660,6 +655,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                                 >
                                   <option value="ENTRY">VÀO</option>
                                   <option value="EXIT">RA</option>
+                                  <option value="PARKING_LOT">TRONG BÃI</option>
                                 </select>
                               </div>
                             </div>

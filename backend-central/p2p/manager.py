@@ -25,6 +25,7 @@ class P2PManager:
         self.on_vehicle_entry_pending: Optional[Callable] = None
         self.on_vehicle_entry_confirmed: Optional[Callable] = None
         self.on_vehicle_exit: Optional[Callable] = None
+        self.on_location_update: Optional[Callable] = None
         self.on_history_update: Optional[Callable] = None
         self.on_history_delete: Optional[Callable] = None
         self.on_sync_request: Optional[Callable] = None
@@ -154,6 +155,11 @@ class P2PManager:
                 # Handle history delete from P2P peer
                 if self.on_history_delete:
                     await self.on_history_delete(message)
+
+            elif message.type == MessageType.LOCATION_UPDATE:
+                # Handle location update from P2P peer
+                if self.on_location_update:
+                    await self.on_location_update(message)
 
             else:
                 print(f"Unknown message type: {message.type}")

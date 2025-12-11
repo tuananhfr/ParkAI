@@ -293,22 +293,46 @@ class DetectionService:
 
                                     # Sync to Central (neu co)
                                     if self.central_sync:
-                                        event_type = "ENTRY" if config.CAMERA_TYPE == "ENTRY" else "EXIT"
+                                        # Determine event type based on camera type and action
+                                        action = entry_result.get('action', '')
+
+                                        if config.CAMERA_TYPE == "PARKING_LOT":
+                                            # PARKING_LOT camera: LOCATION_UPDATE or AUTO_ENTRY
+                                            if action == "LOCATION_UPDATE":
+                                                event_type = "LOCATION_UPDATE"
+                                            elif action == "AUTO_ENTRY":
+                                                event_type = "ENTRY"  # Auto-created entry (anomaly)
+                                            else:
+                                                event_type = "LOCATION_UPDATE"  # Default for parking lot
+                                        elif config.CAMERA_TYPE == "ENTRY":
+                                            event_type = "ENTRY"
+                                        else:
+                                            event_type = "EXIT"
+
                                         sync_data = {
                                             "plate_text": text,
                                             "plate_id": entry_result.get("plate_id"),
                                             "confidence": 0.95,
                                             "source": "auto",
-                                            "entry_id": entry_result.get('entry_id'),
-                                            "entry_time": entry_result.get('entry_time'),
+                                            "event_id": entry_result.get("event_id"),  # Include event_id
                                         }
 
-                                        # Them thong tin cho EXIT
-                                        if event_type == "EXIT":
+                                        # Add type-specific data
+                                        if event_type == "ENTRY":
+                                            sync_data['entry_id'] = entry_result.get('entry_id')
+                                            sync_data['entry_time'] = entry_result.get('entry_time')
+                                            # Include anomaly flag if auto-created
+                                            if entry_result.get('is_anomaly'):
+                                                sync_data['is_anomaly'] = True
+                                        elif event_type == "EXIT":
+                                            sync_data['entry_id'] = entry_result.get('entry_id')
                                             if entry_result.get('duration'):
                                                 sync_data['duration'] = entry_result.get('duration')
                                             if entry_result.get('fee') is not None:
                                                 sync_data['fee'] = entry_result.get('fee')
+                                        elif event_type == "LOCATION_UPDATE":
+                                            sync_data['location'] = entry_result.get('location')
+                                            sync_data['location_time'] = entry_result.get('location_time')
 
                                         self.central_sync.send_event(event_type, sync_data)
 
@@ -536,7 +560,7 @@ class DetectionService:
                 }
             else:
                 return {'status': 'valid', 'message': ''}
-        
+
         elif config.CAMERA_TYPE == "EXIT":
             # Cong RA: Xe da co trong gara → valid
             if existing:
@@ -546,6 +570,12 @@ class DetectionService:
                     'status': 'invalid',
                     'message': f'Xe {display_text} không có trong gara!'
                 }
+
+        elif config.CAMERA_TYPE == "PARKING_LOT":
+            # Camera trong bãi: Luôn valid (xử lý cả 2 trường hợp trong process_entry)
+            # - Có trong bãi: Update location
+            # - Không trong bãi: Auto-create entry (anomaly)
+            return {'status': 'valid', 'message': ''}
         
         return {'status': 'valid', 'message': ''}
 

@@ -105,7 +105,15 @@ class ParkingStateManager:
                 edge_id=data.get('edge_id'),
             )
         elif event_type == "EXIT":
-            return self._process_exit(plate_id, plate_view, camera_id, camera_name, confidence, source)
+            return self._process_exit(
+                plate_id,
+                plate_view,
+                camera_id,
+                camera_name,
+                confidence,
+                source,
+                event_id=event_id
+            )
         else:
             return {"success": False, "error": f"Unknown event type: {event_type}"}
 
@@ -161,7 +169,7 @@ class ParkingStateManager:
                 "error": str(e)
             }
 
-    def _process_exit(self, plate_id, plate_view, camera_id, camera_name, confidence, source):
+    def _process_exit(self, plate_id, plate_view, camera_id, camera_name, confidence, source, event_id=None):
         """Process vehicle exit"""
         # Find entry record
         entry = self.db.find_vehicle_in_parking(plate_id)
@@ -170,6 +178,15 @@ class ParkingStateManager:
                 "success": False,
                 "error": f"Xe {plate_view} không có record VÀO! Vui lòng kiểm tra."
             }
+
+        # Lấy event_id từ record nếu chưa có (để sync P2P/Edges)
+        if not event_id:
+            event_id = entry.get("event_id")
+            if not event_id:
+                # Entry doesn't have event_id (old entry) - generate one
+                import time
+                ms = int(time.time() * 1000)
+                event_id = f"central-{camera_id}_{ms}_{plate_id}"
 
         # Calculate duration and fee
         exit_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -193,11 +210,12 @@ class ParkingStateManager:
             "message": f"Xe {plate_view} RA bãi",
             "plate_id": plate_id,
             "plate_view": plate_view,
+            "history_id": entry.get("id"),
             "entry_time": entry['entry_time'],
             "exit_time": exit_time,
             "duration": duration,
             "fee": fee,
-            "event_id": entry.get('event_id'),
+            "event_id": event_id,
         }
 
     def _normalize_plate(self, text):

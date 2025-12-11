@@ -13,6 +13,7 @@ class MessageType(str, Enum):
     VEHICLE_ENTRY_PENDING = "VEHICLE_ENTRY_PENDING"
     VEHICLE_ENTRY_CONFIRMED = "VEHICLE_ENTRY_CONFIRMED"
     VEHICLE_EXIT = "VEHICLE_EXIT"
+    LOCATION_UPDATE = "LOCATION_UPDATE"  # PARKING_LOT camera location tracking
 
     # History admin operations
     HISTORY_UPDATE = "HISTORY_UPDATE"
@@ -126,6 +127,7 @@ def create_entry_confirmed_message(
 def create_exit_message(
     source_central: str,
     event_id: str,
+    plate_id: str,
     exit_central: str,
     exit_edge: str,
     exit_time: str,
@@ -140,6 +142,7 @@ def create_exit_message(
         timestamp=timestamp,
         event_id=event_id,
         data={
+            "plate_id": plate_id,
             "exit_central": exit_central,
             "exit_edge": exit_edge,
             "exit_time": exit_time,
@@ -183,6 +186,30 @@ def create_history_delete_message(
         event_id=None,
         data={
             "history_id": history_id
+        }
+    )
+
+
+def create_location_update_message(
+    source_central: str,
+    event_id: str,
+    plate_id: str,
+    location: str,
+    location_time: str,
+    is_anomaly: bool = False,
+    timestamp: Optional[int] = None
+) -> P2PMessage:
+    """Create LOCATION_UPDATE message for PARKING_LOT camera detections"""
+    return P2PMessage(
+        msg_type=MessageType.LOCATION_UPDATE,
+        source_central=source_central,
+        timestamp=timestamp,
+        event_id=event_id,
+        data={
+            "plate_id": plate_id,
+            "location": location,
+            "location_time": location_time,
+            "is_anomaly": is_anomaly
         }
     )
 
