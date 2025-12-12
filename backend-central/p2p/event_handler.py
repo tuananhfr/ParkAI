@@ -14,6 +14,8 @@ class P2PEventHandler:
 
     def __init__(self, database, this_central_id: str, on_history_update=None, on_edge_broadcast=None):
         self.db = database
+        # Alias cho các handler mới để tránh AttributeError khi dùng self.database
+        self.database = database
         self.this_central_id = this_central_id
         # Callback async (vd: broadcast_history_update) để bắn WebSocket cho UI
         self.on_history_update = on_history_update
@@ -80,6 +82,7 @@ class P2PEventHandler:
                 "plate_id": plate_id,
                 "direction": "ENTRY",
                 "entry_time": entry_time,
+                "event_type": "ENTRY",
             })
 
             # Broadcast to Edge backends
@@ -193,6 +196,7 @@ class P2PEventHandler:
                     "exit_edge": exit_edge,
                     "exit_time": exit_time,
                     "fee": fee,
+                    "event_type": "EXIT",
                 })
 
                 # Broadcast to Edge backends
@@ -401,7 +405,8 @@ class P2PEventHandler:
                         "action": "location_updated",
                         "plate_id": plate_id,
                         "location": location,
-                        "location_time": location_time
+                        "location_time": location_time,
+                        "event_type": "LOCATION_UPDATE",
                     })
 
                     # Broadcast to Edges
@@ -437,7 +442,8 @@ class P2PEventHandler:
                         "type": "history_update",
                         "action": "entry_created",
                         "plate_id": plate_id,
-                        "is_anomaly": True
+                        "is_anomaly": True,
+                        "event_type": "ENTRY",
                     })
 
                     # Broadcast to Edges
@@ -454,6 +460,55 @@ class P2PEventHandler:
 
         except Exception as e:
             print(f"Error handling LOCATION_UPDATE: {e}")
+            import traceback
+            traceback.print_exc()
+
+    async def handle_parking_lot_config(self, message):
+        """
+        Handle PARKING_LOT_CONFIG from P2P peer (parking lot config update)
+
+        Lưu parking lot config vào database và broadcast đến frontend
+        """
+        try:
+            print(f"[P2P DEBUG] handle_parking_lot_config called, message type: {type(message)}")
+            print(f"[P2P DEBUG] message content: {message}")
+
+            # Extract data from P2PMessage or dict
+            if hasattr(message, 'source_central'):
+                source_central = message.source_central
+                data = message.data if hasattr(message, 'data') else {}
+            else:
+                source_central = message.get("source_central")
+                data = message.get("data", {})
+
+            location_name = data.get("location_name")
+            capacity = data.get("capacity", 0)
+            camera_id = data.get("camera_id")
+            camera_type = data.get("camera_type", "PARKING_LOT")
+            edge_id = data.get("edge_id")
+
+            print(f"[P2P] Received PARKING_LOT_CONFIG from {source_central}: {location_name}, capacity={capacity}")
+
+            # Save to local database
+            if self.db:
+                self.db.save_parking_lot_config(
+                    location_name=location_name,
+                    capacity=capacity,
+                    camera_id=camera_id,
+                    camera_type=camera_type,
+                    edge_id=edge_id
+                )
+                print(f"[P2P] Saved parking lot config: {location_name}, capacity={capacity}")
+
+                # Broadcast to frontend via WebSocket
+                await self._emit_history_update({
+                    "event_type": "PARKING_LOT_CONFIG_UPDATE",
+                    "camera_name": location_name,
+                    "capacity": capacity
+                })
+
+        except Exception as e:
+            print(f"Error handling PARKING_LOT_CONFIG: {e}")
             import traceback
             traceback.print_exc()
 

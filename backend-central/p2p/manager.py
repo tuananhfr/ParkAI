@@ -26,6 +26,7 @@ class P2PManager:
         self.on_vehicle_entry_confirmed: Optional[Callable] = None
         self.on_vehicle_exit: Optional[Callable] = None
         self.on_location_update: Optional[Callable] = None
+        self.on_parking_lot_config: Optional[Callable] = None
         self.on_history_update: Optional[Callable] = None
         self.on_history_delete: Optional[Callable] = None
         self.on_sync_request: Optional[Callable] = None
@@ -160,6 +161,11 @@ class P2PManager:
                 # Handle location update from P2P peer
                 if self.on_location_update:
                     await self.on_location_update(message)
+
+            elif message.type == MessageType.PARKING_LOT_CONFIG:
+                # Handle parking lot config from P2P peer
+                if self.on_parking_lot_config:
+                    await self.on_parking_lot_config(message)
 
             else:
                 print(f"Unknown message type: {message.type}")

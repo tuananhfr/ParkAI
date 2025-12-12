@@ -521,6 +521,7 @@ async def startup():
         p2p_manager.on_vehicle_entry_confirmed = p2p_event_handler.handle_vehicle_entry_confirmed
         p2p_manager.on_vehicle_exit = p2p_event_handler.handle_vehicle_exit
         p2p_manager.on_location_update = p2p_event_handler.handle_location_update
+        p2p_manager.on_parking_lot_config = p2p_event_handler.handle_parking_lot_config
         p2p_manager.on_history_update = p2p_event_handler.handle_history_update
         p2p_manager.on_history_delete = p2p_event_handler.handle_history_delete
 
@@ -802,6 +803,75 @@ async def get_parking_state():
         "success": True,
         **state
     })
+
+
+@app.get("/api/parking/occupancy")
+async def get_parking_occupancy():
+    """
+    Get parking lot occupancy status for all PARKING_LOT cameras
+
+    Logic:
+    - Read parking lot configs from DATABASE (not config.py)
+    - This allows ALL cameras to view parking lot data
+    - Even if camera type changes, parking lot config persists in DB
+
+    Returns array of parking lot cameras with occupancy info from all edges
+    """
+    global database
+
+    try:
+        parking_lots = []
+
+        # Get all parking lot configs from database (not config.py)
+        parking_lot_configs = database.get_all_parking_lots() if database else []
+
+        for lot_config in parking_lot_configs:
+            location_name = lot_config["location_name"]
+            capacity = lot_config["capacity"]
+            camera_id = lot_config["camera_id"]
+
+            # Get vehicles at this location from database
+            vehicles = database.get_vehicles_at_location(location_name) if database else []
+            occupied = len(vehicles)
+            available = max(0, capacity - occupied)
+
+            # Format vehicle list
+            vehicle_list = []
+            for v in vehicles:
+                vehicle_list.append({
+                    "plate_id": v["plate_id"],
+                    "plate_view": v["plate_view"],
+                    "entry_time": v["entry_time"],
+                    "location_time": v["location_time"],
+                    "is_anomaly": bool(v["is_anomaly"])
+                })
+
+            parking_lots.append({
+                "camera": {
+                    "id": camera_id,
+                    "name": location_name,
+                    "type": "PARKING_LOT"
+                },
+                "occupancy": {
+                    "total_capacity": capacity,
+                    "occupied": occupied,
+                    "available": available,
+                    "vehicles": vehicle_list
+                }
+            })
+
+        return JSONResponse({
+            "success": True,
+            "parking_lots": parking_lots
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
 
 
 @app.get("/api/parking/history")
@@ -1486,13 +1556,14 @@ async def sync_edge_config(request: Request):
             edge_ip = cam_config.get("ip")
             edge_name = cam_config.get("name", f"Camera {cam_id_int}")
             edge_type = cam_config.get("camera_type", "ENTRY")
-            
+            edge_capacity = cam_config.get("parking_lot_capacity", 0)
+
             if not edge_ip:
                 continue
-            
+
             # Kiem tra xem camera da ton tai chua
             camera_exists = cam_id_int in current_edge_cameras or str(cam_id_int) in current_edge_cameras
-            
+
             if not camera_exists:
                 # Them camera moi vao config
                 print(f"[Edge Sync] Thêm camera edge mới: {cam_id_int} ({edge_name}) từ {edge_ip}")
@@ -1500,14 +1571,15 @@ async def sync_edge_config(request: Request):
                 # Cap nhat camera hien co
                 current_cam = current_edge_cameras.get(cam_id_int) or current_edge_cameras.get(str(cam_id_int))
                 if current_cam:
-                    if current_cam.get("name") != edge_name or current_cam.get("camera_type") != edge_type:
+                    if current_cam.get("name") != edge_name or current_cam.get("camera_type") != edge_type or current_cam.get("parking_lot_capacity") != edge_capacity:
                         print(f"[Edge Sync] Cập nhật camera edge: {cam_id_int} ({edge_name})")
-            
+
             # Cap nhat config
             current_edge_cameras[cam_id_int] = {
                 "name": edge_name,
                 "ip": edge_ip,
-                "camera_type": edge_type
+                "camera_type": edge_type,
+                "parking_lot_capacity": edge_capacity
             }
             updated = True
         
@@ -1540,6 +1612,42 @@ async def sync_edge_config(request: Request):
                                 events_failed=0
                             )
                             print(f"[Edge Sync] Updated camera {cam_id_int} in database")
+
+                            # Save parking lot config to database if camera type is PARKING_LOT
+                            if cam_config.get("camera_type") == "PARKING_LOT":
+                                capacity = cam_config.get("parking_lot_capacity", 0)
+                                database.save_parking_lot_config(
+                                    location_name=cam_config.get("name"),
+                                    capacity=capacity,
+                                    camera_id=int(cam_id_int) if isinstance(cam_id_int, str) else cam_id_int,
+                                    camera_type="PARKING_LOT",
+                                    edge_id=cam_config.get("ip", "")
+                                )
+                                print(f"[Edge Sync] Saved parking lot config: {cam_config.get('name')}, capacity={capacity}")
+
+                                # Broadcast parking lot config update via WebSocket (for frontend)
+                                try:
+                                    asyncio.create_task(broadcast_history_update({
+                                        "event_type": "PARKING_LOT_CONFIG_UPDATE",
+                                        "camera_name": cam_config.get("name"),
+                                        "capacity": capacity
+                                    }))
+                                except Exception as e:
+                                    print(f"[Edge Sync] Failed to broadcast parking lot config update: {e}")
+
+                                # Broadcast parking lot config via P2P (for other Centrals)
+                                if p2p_broadcaster:
+                                    try:
+                                        asyncio.create_task(p2p_broadcaster.broadcast_parking_lot_config(
+                                            location_name=cam_config.get("name"),
+                                            capacity=capacity,
+                                            camera_id=int(cam_id_int) if isinstance(cam_id_int, str) else cam_id_int,
+                                            camera_type="PARKING_LOT",
+                                            edge_id=cam_config.get("ip", "")
+                                        ))
+                                    except Exception as e:
+                                        print(f"[Edge Sync] Failed to broadcast P2P parking lot config: {e}")
+
                         except Exception as e:
                             print(f"[Edge Sync] Error updating camera {cam_id_int} in database: {e}")
 
@@ -2022,8 +2130,7 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
                     print(f"[Edge WebSocket] Updated location for {plate_id}: {location}")
                     # Broadcast to frontend (use history_update so frontend reloads)
                     await broadcast_history_update({
-                        "type": "history_update",
-                        "action": "location_updated",
+                        "event_type": "LOCATION_UPDATE",
                         "plate_id": plate_id,
                         "location": location,
                         "location_time": location_time
@@ -2066,7 +2173,7 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
                     print(f"⚠️ [Edge WebSocket] Auto-created entry for {plate_id} (ANOMALY)")
                     # Broadcast to frontend
                     await broadcast_history_update({
-                        "type": "entry_created",
+                        "event_type": "ENTRY",
                         "plate_id": plate_id,
                         "is_anomaly": True
                     })
@@ -2114,8 +2221,7 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
                 success = database.update_vehicle_location(plate_id, location, location_time)
                 if success:
                     await broadcast_history_update({
-                        "type": "history_update",
-                        "action": "location_updated",
+                        "event_type": "LOCATION_UPDATE",
                         "plate_id": plate_id,
                         "location": location,
                         "location_time": location_time
@@ -2159,7 +2265,7 @@ async def handle_edge_websocket_event(edge_id: str, event: dict):
             if entry_id:
                 print(f"⚠️ [Edge WebSocket] Auto-created anomaly entry for {plate_id} from PARKING_LOT camera")
                 await broadcast_history_update({
-                    "type": "entry_created",
+                    "event_type": "ENTRY",
                     "plate_id": plate_id,
                     "is_anomaly": True
                 })

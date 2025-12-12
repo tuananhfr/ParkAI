@@ -115,15 +115,32 @@ class ConfigManager:
             "central_server": {
                 "ip": central_ip,
             },
+            "barrier": {
+                "enabled": getattr(config, "BARRIER_ENABLED", False),
+                "gpio_pin": getattr(config, "BARRIER_GPIO_PIN", 18),
+                "auto_close_time": getattr(config, "BARRIER_AUTO_CLOSE_TIME", 5.0),
+            },
+            "parking_lot": {
+                "capacity": getattr(config, "PARKING_LOT_CAPACITY", 0),
+            },
             "edge_cameras": edge_cameras,
         }
 
     def update_config(self, new_config: Dict[str, Any]) -> bool:
         """Cập nhật config vào file config.py"""
         try:
-            # Doc file hien tai
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Doc file hien tai - thu nhieu encoding
+            content = None
+            for encoding in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    with open(self.config_file, 'r', encoding=encoding) as f:
+                        content = f.read()
+                    break
+                except UnicodeDecodeError:
+                    continue
+
+            if content is None:
+                raise Exception("Cannot read config file with any known encoding")
 
             # Xu ly edge_cameras neu co (tu frontend SettingsModal)
             # Edge chi co 1 camera voi id=1, map edge_cameras[1] ve camera section
@@ -224,8 +241,22 @@ class ConfigManager:
                         # Neu IP trong, set CENTRAL_SERVER_URL ve rong
                         content = self._update_value(content, "CENTRAL_SERVER_URL", "", is_string=True)
 
-            # Ghi lai file
-            with open(self.config_file, 'w', encoding='utf-8') as f:
+            if "barrier" in new_config:
+                barrier_config = new_config["barrier"]
+                if "enabled" in barrier_config:
+                    content = self._update_value(content, "BARRIER_ENABLED", barrier_config["enabled"], is_bool=True)
+                if "gpio_pin" in barrier_config:
+                    content = self._update_value(content, "BARRIER_GPIO_PIN", barrier_config["gpio_pin"])
+                if "auto_close_time" in barrier_config:
+                    content = self._update_value(content, "BARRIER_AUTO_CLOSE_TIME", barrier_config["auto_close_time"], is_float=True)
+
+            if "parking_lot" in new_config:
+                parking_lot_config = new_config["parking_lot"]
+                if "capacity" in parking_lot_config:
+                    content = self._update_value(content, "PARKING_LOT_CAPACITY", parking_lot_config["capacity"])
+
+            # Ghi lai file - ensure UTF-8
+            with open(self.config_file, 'w', encoding='utf-8', errors='replace') as f:
                 f.write(content)
 
             # Reload config module

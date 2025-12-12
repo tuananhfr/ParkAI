@@ -48,22 +48,70 @@ class WebSocketManager:
             'data': detections
         }
 
+        # OPTIMIZATION: Serialize CHỈ 1 LẦN thay vì mỗi client 1 lần
+        json_text = json.dumps(message)
+
         # Schedule coroutine in event loop from another thread
         asyncio.run_coroutine_threadsafe(
-            self._send_to_all(message),
+            self._send_to_all(json_text),
             self.loop
         )
 
-    async def _send_to_all(self, message):
-        """Send message tới tất cả connections"""
-        disconnected = []
+    async def _send_to_all(self, json_text):
+        """
+        Send message tới tất cả connections ĐỒNG THỜI (concurrent)
 
-        for connection in self.active_connections:
-            try:
-                await connection.send_json(message)
-            except Exception:
-                disconnected.append(connection)
+        Args:
+            json_text: Already serialized JSON string (tránh serialize nhiều lần)
+        """
+        if not self.active_connections:
+            return
 
-        # Remove disconnected
-        for conn in disconnected:
-            self.disconnect(conn)
+        # Tạo tasks để gửi song song
+        tasks = [
+            self._send_to_one(connection, json_text)
+            for connection in self.active_connections.copy()  # Copy để tránh modify during iteration
+        ]
+
+        # Gửi song song, không đợi nhau
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _send_to_one(self, connection, json_text):
+        """
+        Send message tới 1 connection, tự động remove nếu fail
+
+        Args:
+            json_text: Already serialized JSON string
+        """
+        try:
+            await connection.send_text(json_text)  # Gửi text thay vì send_json
+        except Exception:
+            # Connection failed - remove it
+            self.disconnect(connection)
+
+    def broadcast_barrier_status(self, status):
+        """
+        Broadcast barrier status change tới tất cả clients
+
+        Args:
+            status: dict with {"is_open": bool, "enabled": bool}
+        """
+        if not self.active_connections:
+            return
+
+        if self.loop is None:
+            return
+
+        message = {
+            'type': 'barrier_status',
+            'data': status
+        }
+
+        # Serialize once
+        json_text = json.dumps(message)
+
+        # Schedule coroutine in event loop from another thread
+        asyncio.run_coroutine_threadsafe(
+            self._send_to_all(json_text),
+            self.loop
+        )

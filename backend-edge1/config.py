@@ -78,10 +78,13 @@ DB_FILE = "data/parking.db"
 # Neu muon moi camera co DB rieng (sync ve server sau):
 # DB_FILE = f"data/parking_cam{CAMERA_ID}.db"
 
-# BARRIER CONTROL - KHONG SU DUNG (Da xoa logic barrier)
-# BARRIER_ENABLED = False
-# BARRIER_GPIO_PIN = 18
-# BARRIER_AUTO_CLOSE_TIME = 5.0
+# BARRIER CONTROL
+BARRIER_ENABLED = False  # Set True để bật barrier (GPIO control)
+BARRIER_GPIO_PIN = 18    # GPIO pin điều khiển relay
+BARRIER_AUTO_CLOSE_TIME = 5.0  # Tự động đóng sau N giây (nếu dùng auto close)
+
+# PARKING LOT (for PARKING_LOT camera type)
+PARKING_LOT_CAPACITY = 0  # Tổng số chỗ đỗ xe mà camera PARKING_LOT này quản lý
 
 # CENTRAL SERVER (de sync data)
 # De trong neu muon su dung Edge standalone, hoac nhap URL Central Server

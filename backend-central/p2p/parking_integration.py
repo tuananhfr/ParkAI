@@ -9,7 +9,8 @@ from .protocol import (
     create_exit_message,
     create_history_update_message,
     create_history_delete_message,
-    create_location_update_message
+    create_location_update_message,
+    create_parking_lot_config_message,
 )
 
 
@@ -209,3 +210,42 @@ class P2PParkingBroadcaster:
 
         except Exception as e:
             print(f"Error broadcasting location update: {e}")
+
+    async def broadcast_parking_lot_config(
+        self,
+        location_name: str,
+        capacity: int,
+        camera_id: int,
+        camera_type: str = "PARKING_LOT",
+        edge_id: Optional[str] = None
+    ):
+        """
+        Broadcast PARKING_LOT_CONFIG event (parking lot config update)
+
+        Call này khi Edge sync parking lot config lên Central
+        """
+        print(f"[P2P DEBUG] broadcast_parking_lot_config called: {location_name}, capacity={capacity}")
+        print(f"[P2P DEBUG] p2p_manager: {self.p2p_manager}")
+        print(f"[P2P DEBUG] is_standalone: {self.p2p_manager.config.is_standalone() if self.p2p_manager else 'N/A'}")
+
+        if not self.p2p_manager or self.p2p_manager.config.is_standalone():
+            print("[P2P DEBUG] Skipping broadcast - standalone mode or no p2p_manager")
+            return
+
+        try:
+            # Use P2PMessage helper to ensure correct serialization
+            message = create_parking_lot_config_message(
+                source_central=self.central_id,
+                location_name=location_name,
+                capacity=capacity,
+                camera_id=camera_id,
+                camera_type=camera_type,
+                edge_id=edge_id,
+            )
+
+            print(f"[P2P DEBUG] Broadcasting message: {message.to_dict()}")
+            await self.p2p_manager.broadcast(message)
+            print(f"Broadcasted PARKING_LOT_CONFIG: {location_name}, capacity={capacity}")
+
+        except Exception as e:
+            print(f"Error broadcasting parking lot config: {e}")

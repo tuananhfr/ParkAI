@@ -23,6 +23,7 @@ from detection_service import DetectionService
 from ocr_service import OCRService
 from websocket_manager import WebSocketManager
 from parking_manager import ParkingManager
+from barrier_controller import BarrierController
 from central_sync import CentralSyncService
 from config_manager import ConfigManager
 
@@ -43,6 +44,7 @@ detection_service = None
 ocr_service = None
 websocket_manager = WebSocketManager()
 parking_manager = None
+barrier_controller = None
 central_sync = None
 config_manager = ConfigManager()
 
@@ -122,9 +124,15 @@ def _ocr_state():
         "error": getattr(ocr_service, "error", "not_initialized")
     }
 
+# WebRTC Frame Cache - Shared giữa các tracks để tránh duplicate processing
+_webrtc_frame_cache = {
+    "raw": {"frame": None, "timestamp": 0},
+    "annotated": {"frame": None, "timestamp": 0}
+}
+
 # WebRTC Video Track
 class CameraVideoTrack(VideoStreamTrack):
-    """Video track - chỉ stream raw camera"""
+    """Video track - chỉ stream raw camera (with frame caching)"""
     kind = "video"
 
     def __init__(self, camera_manager):
@@ -135,18 +143,31 @@ class CameraVideoTrack(VideoStreamTrack):
     async def recv(self):
         pts, time_base = await self.next_timestamp()
 
-        frame = self.camera_manager.get_raw_frame()
-
-        if frame is None or frame.size == 0:
-            frame = np.zeros(
-                (config.RESOLUTION_HEIGHT, config.RESOLUTION_WIDTH, 3),
-                dtype=np.uint8
-            )
+        # Check cache first (30 FPS = 33ms per frame)
+        now = time.time()
+        if (_webrtc_frame_cache["raw"]["frame"] is not None and
+            (now - _webrtc_frame_cache["raw"]["timestamp"]) < 0.033):
+            # Reuse cached frame - tránh duplicate processing
+            frame = _webrtc_frame_cache["raw"]["frame"]
         else:
-            self.frame_count += 1
-            # Convert RGB to BGR (swap Red and Blue channels)
-            frame = frame[:, :, ::-1]
+            # Get new frame from camera
+            frame = self.camera_manager.get_raw_frame()
 
+            if frame is None or frame.size == 0:
+                frame = np.zeros(
+                    (config.RESOLUTION_HEIGHT, config.RESOLUTION_WIDTH, 3),
+                    dtype=np.uint8
+                )
+            else:
+                self.frame_count += 1
+                # Convert RGB to BGR (swap Red and Blue channels)
+                frame = frame[:, :, ::-1]
+
+            # Cache frame for other tracks to reuse
+            _webrtc_frame_cache["raw"]["frame"] = frame
+            _webrtc_frame_cache["raw"]["timestamp"] = now
+
+        # Create VideoFrame with unique pts for this track
         new_frame = VideoFrame.from_ndarray(frame, format="rgb24")
         new_frame.pts = pts
         new_frame.time_base = time_base
@@ -155,7 +176,7 @@ class CameraVideoTrack(VideoStreamTrack):
 
 
 class AnnotatedVideoTrack(VideoStreamTrack):
-    """Video track - stream annotated video (có boxes vẽ sẵn từ backend)"""
+    """Video track - stream annotated video (có boxes vẽ sẵn từ backend, with frame caching)"""
     kind = "video"
 
     def __init__(self, camera_manager):
@@ -166,18 +187,31 @@ class AnnotatedVideoTrack(VideoStreamTrack):
     async def recv(self):
         pts, time_base = await self.next_timestamp()
 
-        frame = self.camera_manager.get_annotated_frame()
-
-        if frame is None or frame.size == 0:
-            frame = np.zeros(
-                (config.RESOLUTION_HEIGHT, config.RESOLUTION_WIDTH, 3),
-                dtype=np.uint8
-            )
+        # Check cache first (30 FPS = 33ms per frame)
+        now = time.time()
+        if (_webrtc_frame_cache["annotated"]["frame"] is not None and
+            (now - _webrtc_frame_cache["annotated"]["timestamp"]) < 0.033):
+            # Reuse cached frame - tránh duplicate processing
+            frame = _webrtc_frame_cache["annotated"]["frame"]
         else:
-            self.frame_count += 1
-            # Convert RGB to BGR (swap Red and Blue channels)
-            frame = frame[:, :, ::-1]
+            # Get new frame from camera
+            frame = self.camera_manager.get_annotated_frame()
 
+            if frame is None or frame.size == 0:
+                frame = np.zeros(
+                    (config.RESOLUTION_HEIGHT, config.RESOLUTION_WIDTH, 3),
+                    dtype=np.uint8
+                )
+            else:
+                self.frame_count += 1
+                # Convert RGB to BGR (swap Red and Blue channels)
+                frame = frame[:, :, ::-1]
+
+            # Cache frame for other tracks to reuse
+            _webrtc_frame_cache["annotated"]["frame"] = frame
+            _webrtc_frame_cache["annotated"]["timestamp"] = now
+
+        # Create VideoFrame with unique pts for this track
         new_frame = VideoFrame.from_ndarray(frame, format="rgb24")
         new_frame.pts = pts
         new_frame.time_base = time_base
@@ -190,7 +224,7 @@ async def startup():
     # Suppress STUN transaction InvalidStateError warnings
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(_suppress_stun_errors)
-    global camera_manager, detection_service, ocr_service, parking_manager, central_sync
+    global camera_manager, detection_service, ocr_service, parking_manager, barrier_controller, central_sync
 
     try:
         # Set event loop cho WebSocket manager
@@ -211,6 +245,14 @@ async def startup():
 
         # Initialize parking manager
         parking_manager = ParkingManager(db_file=config.DB_FILE)
+
+        # Initialize barrier controller
+        barrier_controller = BarrierController(
+            enabled=config.BARRIER_ENABLED,
+            gpio_pin=config.BARRIER_GPIO_PIN,
+            auto_close_time=config.BARRIER_AUTO_CLOSE_TIME,
+            websocket_manager=websocket_manager
+        )
 
         # Initialize central sync service
         # Theo thiet ke: neu co CENTRAL_SERVER_URL thi tu bat sync (khong bat user tick them flag)
@@ -244,13 +286,16 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
-    global camera_manager, detection_service
+    global camera_manager, detection_service, barrier_controller
 
     if detection_service:
         detection_service.stop()
 
     if camera_manager:
         camera_manager.stop()
+
+    if barrier_controller:
+        barrier_controller.cleanup()
 
     # Cleanup tat ca peer connections
     coros = [safe_close_pc(pc) for pc in list(pcs)]
@@ -590,6 +635,80 @@ async def get_stats():
         }, status_code=500)
 
 
+@app.get("/api/parking/occupancy")
+async def get_parking_occupancy():
+    """
+    Get parking lot occupancy status for all PARKING_LOT cameras
+
+    Logic:
+    - Read parking lot configs from DATABASE (not config.py)
+    - This allows ALL cameras (ENTRY/EXIT/PARKING_LOT) to view parking lot data
+    - Even if camera type changes, parking lot config persists in DB
+
+    Returns array of parking lot cameras with occupancy info:
+    - Camera info (id, name, type)
+    - Total capacity (from DB)
+    - Occupied count (vehicles at this location)
+    - Available spots (capacity - occupied)
+    - List of vehicles currently at this location
+    """
+    global parking_manager
+
+    try:
+        parking_lots = []
+
+        # Get all parking lot configs from database (not config.py)
+        parking_lot_configs = parking_manager.db.get_all_parking_lots()
+
+        for lot_config in parking_lot_configs:
+            location_name = lot_config["location_name"]
+            capacity = lot_config["capacity"]
+            camera_id = lot_config["camera_id"]
+
+            # Get vehicles at this location from database
+            vehicles = parking_manager.db.get_vehicles_at_location(location_name)
+            occupied = len(vehicles)
+            available = max(0, capacity - occupied)
+
+            # Format vehicle list for response
+            vehicle_list = []
+            for v in vehicles:
+                vehicle_list.append({
+                    "plate_id": v["plate_id"],
+                    "plate_view": v["plate_view"],
+                    "entry_time": v["entry_time"],
+                    "location_time": v["location_time"],
+                    "is_anomaly": bool(v["is_anomaly"])
+                })
+
+            parking_lots.append({
+                "camera": {
+                    "id": camera_id,
+                    "name": location_name,
+                    "type": "PARKING_LOT"
+                },
+                "occupancy": {
+                    "total_capacity": capacity,
+                    "occupied": occupied,
+                    "available": available,
+                    "vehicles": vehicle_list
+                }
+            })
+
+        return JSONResponse({
+            "success": True,
+            "parking_lots": parking_lots
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
 @app.get("/api/camera/info")
 async def camera_info():
     """Thông tin camera này"""
@@ -723,6 +842,28 @@ async def update_config(request: Request):
         import importlib
         importlib.reload(config)
 
+        # Save parking lot config to database if camera type is PARKING_LOT
+        # This allows parking lot data to persist even after camera type changes
+        if config.CAMERA_TYPE == "PARKING_LOT":
+            capacity = getattr(config, "PARKING_LOT_CAPACITY", 0)
+            parking_manager.db.save_parking_lot_config(
+                location_name=config.CAMERA_NAME,
+                capacity=capacity,
+                camera_id=config.CAMERA_ID,
+                camera_type=config.CAMERA_TYPE
+            )
+            print(f"[Config] Saved parking lot config to DB: {config.CAMERA_NAME}, capacity={capacity}")
+
+            # Broadcast parking lot config update via WebSocket
+            try:
+                asyncio.create_task(broadcast_history_update({
+                    "event_type": "PARKING_LOT_CONFIG_UPDATE",
+                    "camera_name": config.CAMERA_NAME,
+                    "capacity": capacity
+                }))
+            except Exception as e:
+                print(f"[Config] Failed to broadcast parking lot config update: {e}")
+
         # Cap nhat central_sync neu camera_type thay doi
         if central_sync and "camera" in new_config and "type" in new_config["camera"]:
             central_sync.camera_type = config.CAMERA_TYPE
@@ -743,7 +884,8 @@ async def update_config(request: Request):
                         "1": {
                             "name": config.CAMERA_NAME,
                             "ip": edge_ip,
-                            "camera_type": config.CAMERA_TYPE
+                            "camera_type": config.CAMERA_TYPE,
+                            "parking_lot_capacity": getattr(config, "PARKING_LOT_CAPACITY", 0)
                         }
                     }
                 }
@@ -1009,6 +1151,8 @@ async def get_cameras():
             "available": True,
             "base_url": base_url,
             "info_url": f"{base_url}/api/camera/info",
+            "open_barrier_url": f"{base_url}/api/open-barrier",
+            "barrier_status_url": f"{base_url}/api/barrier/status",
             "ws_url": ws_url
         }
 
@@ -1455,6 +1599,186 @@ async def update_parking_fees(request: Request):
             "error": str(e)
         }, status_code=500)
 
+
+# ==================== BARRIER CONTROL ====================
+
+@app.post("/api/open-barrier")
+async def open_barrier(request: Request):
+    """
+    Mở barrier - CHỈ MỞ, KHÔNG LƯU DB
+
+    Body: {
+        "plate_text": "30G56789",
+        "confidence": 0.92,
+        "source": "auto" | "manual"
+    }
+    """
+    global barrier_controller, parking_manager
+
+    try:
+        data = await request.json()
+        plate_text = data.get('plate_text', '').strip()
+        confidence = data.get('confidence', 0.0)
+        source = data.get('source', 'manual')
+
+        if not plate_text:
+            return JSONResponse({
+                "success": False,
+                "error": "plate_text is required"
+            }, status_code=400)
+
+        # Lưu thông tin tạm thời để lưu DB khi đóng barrier
+        pending_entry = {
+            "plate_text": plate_text,
+            "confidence": confidence,
+            "source": source
+        }
+
+        # Mở barrier (không auto close)
+        if barrier_controller:
+            barrier_controller.open_barrier(auto_close_delay=None, pending_entry=pending_entry)
+        else:
+            return JSONResponse({
+                "success": False,
+                "error": "Barrier controller not initialized"
+            }, status_code=500)
+
+        return JSONResponse({
+            "success": True,
+            "message": f"Barrier đã mở cho xe {plate_text}",
+            "barrier_opened": True,
+            "camera_info": {
+                "id": config.CAMERA_ID,
+                "name": config.CAMERA_NAME,
+                "type": config.CAMERA_TYPE
+            }
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/api/barrier/status")
+async def barrier_status():
+    """Trạng thái barrier"""
+    global barrier_controller
+
+    if barrier_controller:
+        return JSONResponse({
+            "success": True,
+            **barrier_controller.get_status()
+        })
+    else:
+        return JSONResponse({
+            "success": False,
+            "error": "Barrier controller not initialized"
+        }, status_code=500)
+
+
+@app.post("/api/close-barrier")
+async def close_barrier(request: Request):
+    """
+    Đóng barrier - ĐÓNG VÀ LƯU DB
+
+    Flow: Lưu DB SAU KHI barrier đóng (entry_time = thời điểm đóng)
+    """
+    global barrier_controller, parking_manager, central_sync
+
+    if not barrier_controller:
+        return JSONResponse({
+            "success": False,
+            "error": "Barrier controller not initialized"
+        }, status_code=500)
+
+    try:
+        # Đóng barrier và lấy pending entry (nếu có)
+        pending_entry = barrier_controller.close_barrier()
+
+        # Nếu có pending entry → Lưu DB với entry_time = thời điểm barrier đóng
+        if pending_entry and parking_manager:
+            # Generate event_id
+            ms = int(time.time() * 1000)
+            clean_plate = pending_entry["plate_text"].strip().upper().replace(" ", "")
+            event_id = f"edge-{config.CAMERA_ID}_{ms}_{clean_plate}"
+
+            result = parking_manager.process_entry(
+                plate_text=pending_entry["plate_text"],
+                camera_id=config.CAMERA_ID,
+                camera_type=config.CAMERA_TYPE,
+                camera_name=config.CAMERA_NAME,
+                confidence=pending_entry["confidence"],
+                source=pending_entry["source"],
+                event_id=event_id
+            )
+
+            if result.get("success"):
+                # Broadcast to frontend
+                asyncio.create_task(broadcast_history_update({
+                    "event_type": config.CAMERA_TYPE,
+                    "event_id": event_id,
+                    "camera_id": config.CAMERA_ID,
+                    "camera_name": config.CAMERA_NAME,
+                    "camera_type": config.CAMERA_TYPE,
+                    **{k: v for k, v in result.items() if not isinstance(v, bytes)}
+                }))
+
+                # Sync to Central
+                if central_sync:
+                    sync_data = {
+                        "event_id": event_id,
+                        "plate_text": pending_entry["plate_text"],
+                        "plate_id": result.get("plate_id"),
+                        "confidence": pending_entry["confidence"],
+                        "source": pending_entry["source"],
+                        "entry_id": result.get("entry_id"),
+                        "entry_time": result.get("entry_time")
+                    }
+
+                    if config.CAMERA_TYPE == "EXIT":
+                        sync_data["duration"] = result.get("duration")
+                        sync_data["fee"] = result.get("fee", 0)
+
+                    central_sync.send_event(config.CAMERA_TYPE, sync_data)
+
+                return JSONResponse({
+                    "success": True,
+                    "message": "Barrier đã đóng và đã lưu DB",
+                    "entry_saved": True,
+                    "entry_id": result.get('entry_id'),
+                    **barrier_controller.get_status()
+                })
+            else:
+                return JSONResponse({
+                    "success": True,
+                    "message": "Barrier đã đóng nhưng không thể lưu DB",
+                    "entry_saved": False,
+                    "entry_error": result.get('error'),
+                    **barrier_controller.get_status()
+                })
+
+        # Không có pending entry → Chỉ đóng barrier
+        return JSONResponse({
+            "success": True,
+            "message": "Barrier đã đóng",
+            "entry_saved": False,
+            **barrier_controller.get_status()
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+# ==================== MANUAL ENTRY ====================
 
 @app.post("/api/parking/manual-entry")
 async def manual_entry(request: Request):

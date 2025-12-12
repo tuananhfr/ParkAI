@@ -383,9 +383,11 @@ class ParkingManager:
         """
         Xử lý detection từ camera PARKING_LOT (camera trong bãi)
 
-        Logic:
-        - Nếu xe ĐÃ trong bãi (status=IN): Cập nhật vị trí
+        Logic MỚI (anti-spam):
         - Nếu xe CHƯA trong bãi: Tự động tạo entry (đánh dấu anomaly)
+        - Nếu xe ĐÃ trong bãi:
+          - Nếu vị trí khác với camera hiện tại → Update location
+          - Nếu vị trí giống camera hiện tại → SKIP (không spam)
         """
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -401,30 +403,43 @@ class ParkingManager:
         vehicle = self.db.find_vehicle_in_parking(plate_id)
 
         if vehicle:
-            # ✅ Case 1: Xe ĐÃ trong bãi → Update location
-            success = self.db.update_vehicle_location(
-                plate_id=plate_id,
-                location=camera_name,
-                location_time=current_time
-            )
+            # ✅ Case 1: Xe ĐÃ trong bãi
+            current_location = vehicle.get('last_location')
 
-            if success:
-                print(f"[PARKING_LOT] Updated location for {display_text}: {camera_name}")
-                return {
-                    "success": True,
-                    "action": "LOCATION_UPDATE",
-                    "plate": display_text,
-                    "plate_id": plate_id,
-                    "location": camera_name,
-                    "location_time": current_time,
-                    "is_anomaly": False,
-                    "event_id": event_id,
-                    "message": f"Xe {display_text} đang ở {camera_name}"
-                }
+            # Check: Vị trí đã lưu có phải camera này chưa?
+            if current_location != camera_name:
+                # Vị trí KHÁC → Update location (xe vừa chuyển vị trí)
+                success = self.db.update_vehicle_location(
+                    plate_id=plate_id,
+                    location=camera_name,
+                    location_time=current_time
+                )
+
+                if success:
+                    print(f"[PARKING_LOT] Updated location for {display_text}: {current_location} → {camera_name}")
+                    return {
+                        "success": True,
+                        "action": "LOCATION_UPDATE",
+                        "plate": display_text,
+                        "plate_id": plate_id,
+                        "location": camera_name,
+                        "location_time": current_time,
+                        "is_anomaly": False,
+                        "event_id": event_id,
+                        "message": f"Xe {display_text} chuyển đến {camera_name}"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "error": f"Failed to update location for {display_text}"
+                    }
             else:
+                # Vị trí GIỐNG → SKIP (không spam update)
                 return {
                     "success": False,
-                    "error": f"Failed to update location for {display_text}"
+                    "reason": "already_at_location",
+                    "skip": True,
+                    "message": f"Xe {display_text} đã ở {camera_name} rồi (skip)"
                 }
         else:
             # ⚠️ Case 2: Xe CHƯA trong bãi → Tự động tạo entry (anomaly)

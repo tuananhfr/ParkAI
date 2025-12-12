@@ -141,6 +141,24 @@ class Database:
             except sqlite3.OperationalError:
                 pass
 
+            # Table: parking_lots - Store parking lot configurations
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS parking_lots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    location_name TEXT NOT NULL UNIQUE,   -- Camera name (e.g., "Bãi A")
+                    capacity INTEGER DEFAULT 0,            -- Total parking spots
+                    camera_id INTEGER,                     -- Camera ID that manages this lot
+                    camera_type TEXT,                      -- Should be "PARKING_LOT"
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_parking_lots_location
+                ON parking_lots(location_name)
+            """)
+
             conn.commit()
             conn.close()
 
@@ -724,3 +742,90 @@ class Database:
             conn.close()
 
             return entry_id
+
+    def get_vehicles_at_location(self, location):
+        """
+        Get all vehicles currently at a specific parking lot location
+        Returns list of vehicle dicts
+        """
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, plate_id, plate_view, entry_time,
+                       last_location, last_location_time, is_anomaly
+                FROM entries
+                WHERE last_location = ? AND status = 'IN'
+                ORDER BY last_location_time DESC
+            """, (location,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            vehicles = []
+            for row in rows:
+                vehicles.append({
+                    "id": row[0],
+                    "plate_id": row[1],
+                    "plate_view": row[2],
+                    "entry_time": row[3],
+                    "location": row[4],
+                    "location_time": row[5],
+                    "is_anomaly": row[6]
+                })
+            return vehicles
+
+    def save_parking_lot_config(self, location_name, capacity, camera_id, camera_type="PARKING_LOT"):
+        """
+        Save or update parking lot configuration to database
+        This allows parking lot config to persist even after camera type changes
+        """
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO parking_lots (location_name, capacity, camera_id, camera_type, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(location_name) DO UPDATE SET
+                    capacity = excluded.capacity,
+                    camera_id = excluded.camera_id,
+                    camera_type = excluded.camera_type,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (location_name, capacity, camera_id, camera_type))
+
+            conn.commit()
+            conn.close()
+            print(f"[Database] Saved parking lot config: {location_name}, capacity={capacity}")
+
+    def get_all_parking_lots(self):
+        """
+        Get all parking lot configurations from database
+        Returns list of parking lot configs with their current occupancy
+        """
+        with self.lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, location_name, capacity, camera_id, camera_type, created_at, updated_at
+                FROM parking_lots
+                ORDER BY location_name
+            """)
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            parking_lots = []
+            for row in rows:
+                parking_lots.append({
+                    "id": row[0],
+                    "location_name": row[1],
+                    "capacity": row[2],
+                    "camera_id": row[3],
+                    "camera_type": row[4],
+                    "created_at": row[5],
+                    "updated_at": row[6]
+                })
+            return parking_lots

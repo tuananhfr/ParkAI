@@ -57,10 +57,13 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
       setLoading(true);
       const response = await fetch(`${CENTRAL_URL}/api/config`);
       const data = await response.json();
+      console.log("[Settings] Fetched config:", data);
+      console.log("[Settings] Parking lot capacity from backend:", data.config?.parking_lot?.capacity);
       if (data.success) {
         setConfig(data.config);
       }
     } catch (err) {
+      console.error("[Settings] Fetch error:", err);
       setMessage({ type: "error", text: "Không thể tải cấu hình" });
     } finally {
       setLoading(false);
@@ -70,13 +73,27 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
   const handleSave = async () => {
     try {
       setSaving(true);
+      console.log("[Settings] Saving config:", config);
+      console.log("[Settings] Parking lot capacity:", config.parking_lot?.capacity);
+
       const response = await fetch(`${CENTRAL_URL}/api/config`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config),
       });
       const data = await response.json();
+
+      console.log("[Settings] Save response:", data);
+
       if (data.success) {
+        console.log("[Settings] Config saved successfully");
+        console.log("[Settings] Returned config:", data.config);
+
+        // Broadcast config change event to all components
+        window.dispatchEvent(new CustomEvent('configUpdated', {
+          detail: { timestamp: Date.now() }
+        }));
+
         onClose();
         if (typeof onSaveSuccess === "function") {
           onSaveSuccess();
@@ -88,6 +105,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
         });
       }
     } catch (err) {
+      console.error("[Settings] Save error:", err);
       setMessage({ type: "error", text: "Không thể lưu cấu hình" });
     } finally {
       setSaving(false);
@@ -282,6 +300,18 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                   <li className="nav-item" role="presentation">
                     <button
                       className={`nav-link ${
+                        activeTab === "barrier" ? "active" : ""
+                      }`}
+                      onClick={() => setActiveTab("barrier")}
+                      type="button"
+                    >
+                      <i className="bi bi-door-closed me-2"></i>
+                      Barrier
+                    </button>
+                  </li>
+                  <li className="nav-item" role="presentation">
+                    <button
+                      className={`nav-link ${
                         activeTab === "card_reader" ? "active" : ""
                       }`}
                       onClick={() => setActiveTab("card_reader")}
@@ -432,7 +462,7 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                       <input
                         type="number"
                         className="form-control form-control-sm"
-                        value={config.camera.heartbeat_timeout}
+                        value={config.camera?.heartbeat_timeout || 30}
                         onChange={(e) =>
                           updateConfig(
                             "camera",
@@ -659,6 +689,46 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                                 </select>
                               </div>
                             </div>
+
+                            {/* Capacity input - chỉ hiển thị khi camera type = PARKING_LOT */}
+                            {camConfig.camera_type === "PARKING_LOT" && (
+                              <div className="row g-2 mt-2">
+                                <div className="col-md-12">
+                                  <label className="form-label small">
+                                    <i className="bi bi-car-front me-1"></i>
+                                    Tổng số chỗ đỗ xe
+                                  </label>
+                                  <input
+                                    type="text"
+                                    className="form-control form-control-sm"
+                                    value={
+                                      config.parking_lot?.capacity > 0
+                                        ? config.parking_lot.capacity
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const value = e.target.value;
+                                      // Chỉ cho phép số hoặc rỗng
+                                      if (value === "" || /^\d+$/.test(value)) {
+                                        const numValue = value === "" ? 0 : parseInt(value, 10);
+                                        console.log("[Settings] Updating capacity:", numValue);
+                                        updateConfig(
+                                          "parking_lot",
+                                          "capacity",
+                                          numValue
+                                        );
+                                      }
+                                    }}
+                                    placeholder="Ví dụ: 10"
+                                  />
+                                  <small className="text-muted">
+                                    <i className="bi bi-info-circle me-1"></i>
+                                    Số lượng chỗ đỗ xe mà camera này quản lý
+                                  </small>
+                                </div>
+                              </div>
+                            )}
+
                             <div className="mt-2">
                               <small className="text-muted">
                                 <i className="bi bi-info-circle me-1"></i>
@@ -765,6 +835,97 @@ const SettingsModal = ({ show, onClose, onSaveSuccess }) => {
                         />
                       )}
                     </div>
+                  </div>
+                )}
+
+                {activeTab === "barrier" && (
+                  <div>
+                    <h6 className="border-bottom pb-2 mb-3">
+                      <i className="bi bi-door-closed me-2"></i>
+                      Cài đặt Barrier
+                    </h6>
+
+                    <div className="alert alert-info mb-3">
+                      <strong>Lưu ý:</strong> Đây là cài đặt <strong>CÓ/KHÔNG</strong> sử dụng hệ thống barrier.
+                      <br />
+                      Sau khi bật, bạn sẽ có nút <strong>MỞ/ĐÓNG</strong> barrier trên frontend.
+                    </div>
+
+                    <div className="mb-3">
+                      <div className="form-check form-switch">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="barrierEnabled"
+                          checked={config.barrier?.enabled || false}
+                          onChange={(e) =>
+                            updateConfig("barrier", "enabled", e.target.checked)
+                          }
+                        />
+                        <label className="form-check-label" htmlFor="barrierEnabled">
+                          <strong>CÓ sử dụng hệ thống Barrier</strong>
+                        </label>
+                      </div>
+                      <small className="text-muted d-block mt-2">
+                        <i className="bi bi-info-circle me-1"></i>
+                        <strong>BẬT:</strong> Hệ thống có barrier → Nhập biển → Mở barrier → Đợi đóng → Lưu DB
+                        <br />
+                        <strong>TẮT:</strong> Không có barrier → Nhập biển → Lưu DB ngay
+                      </small>
+                    </div>
+                    {config.barrier?.enabled && (
+                      <div className="card border-primary">
+                        <div className="card-body">
+                          <h6 className="card-title text-primary mb-3">
+                            <i className="bi bi-gear me-2"></i>
+                            Cấu hình GPIO
+                          </h6>
+                          <div className="row g-3">
+                            <div className="col-md-6">
+                              <label className="form-label small">
+                                GPIO Pin
+                              </label>
+                              <input
+                                type="number"
+                                className="form-control form-control-sm"
+                                value={config.barrier?.gpio_pin || 18}
+                                onChange={(e) =>
+                                  updateConfig(
+                                    "barrier",
+                                    "gpio_pin",
+                                    parseInt(e.target.value)
+                                  )
+                                }
+                              />
+                              <small className="text-muted">
+                                GPIO pin để điều khiển relay barrier
+                              </small>
+                            </div>
+                            <div className="col-md-6">
+                              <label className="form-label small">
+                                Tự động đóng sau (giây)
+                              </label>
+                              <input
+                                type="number"
+                                className="form-control form-control-sm"
+                                value={config.barrier?.auto_close_time || 5.0}
+                                step="0.5"
+                                onChange={(e) =>
+                                  updateConfig(
+                                    "barrier",
+                                    "auto_close_time",
+                                    parseFloat(e.target.value)
+                                  )
+                                }
+                              />
+                              <small className="text-muted">
+                                Để 0 nếu không muốn tự động đóng
+                              </small>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

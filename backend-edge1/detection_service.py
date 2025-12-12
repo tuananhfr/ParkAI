@@ -287,7 +287,11 @@ class DetectionService:
                                     source='auto'
                                 )
 
-                                if entry_result.get('success'):
+                                # Check if skipped (already at location)
+                                if entry_result.get('skip'):
+                                    # SKIP: Xe đã ở vị trí này rồi, không cần sync
+                                    print(f"[SKIP] {text} - {entry_result.get('message')}")
+                                elif entry_result.get('success'):
                                     entry_saved = True
                                     print(f"Auto saved: {text} - {entry_result.get('message')}")
 

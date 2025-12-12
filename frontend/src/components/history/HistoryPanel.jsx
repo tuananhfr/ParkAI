@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { formatTime } from "@/utils/formatTime";
+import ParkingLotView from "./ParkingLotView";
 
 /**
  * HistoryPanel - Component hiển thị lịch sử vào/ra và quản lý sửa/xóa
@@ -167,6 +168,10 @@ const HistoryPanel = ({ backendUrl }) => {
       fetchChanges();
       return;
     }
+    if (filter === "parking_lot") {
+      // Parking lot view handles its own data fetching
+      return;
+    }
     const timeoutId = setTimeout(() => {
       fetchHistory();
     }, 500);
@@ -279,37 +284,51 @@ const HistoryPanel = ({ backendUrl }) => {
             <i className="bi bi-clock-history me-1"></i>
             Đã thay đổi
           </button>
+          <button
+            className={`btn ${
+              filter === "parking_lot"
+                ? "btn-secondary"
+                : "btn-outline-secondary"
+            }`}
+            onClick={() => setFilter("parking_lot")}
+          >
+            Bãi đỗ
+          </button>
         </div>
 
-        {/* Tìm kiếm biển số */}
-        <div className="mt-2">
-          <div className="input-group input-group-sm">
-            <span className="input-group-text">
-              <i className="bi bi-search"></i>
-            </span>
-            <input
-              type="text"
-              className="form-control"
-              placeholder="Tìm kiếm biển số..."
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-            />
-            {searchText && (
-              <button
-                className="btn btn-outline-secondary"
-                type="button"
-                onClick={() => setSearchText("")}
-              >
-                <i className="bi bi-x"></i>
-              </button>
-            )}
+        {/* Tìm kiếm biển số - Ẩn khi ở tab Bãi đỗ hoặc Đã thay đổi */}
+        {filter !== "parking_lot" && filter !== "changes" && (
+          <div className="mt-2">
+            <div className="input-group input-group-sm">
+              <span className="input-group-text">
+                <i className="bi bi-search"></i>
+              </span>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Tìm kiếm biển số..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+              />
+              {searchText && (
+                <button
+                  className="btn btn-outline-secondary"
+                  type="button"
+                  onClick={() => setSearchText("")}
+                >
+                  <i className="bi bi-x"></i>
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* History List hoặc Changes List */}
+      {/* History List hoặc Changes List hoặc Parking Lot View */}
       <div className="flex-grow-1 overflow-auto p-2">
-        {filter === "changes" ? (
+        {filter === "parking_lot" ? (
+          <ParkingLotView backendUrl={backendUrl} />
+        ) : filter === "changes" ? (
           //Tab "Da thay doi"
           changesLoading ? (
             <div className="text-center py-4">

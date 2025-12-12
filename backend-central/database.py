@@ -135,6 +135,25 @@ class CentralDatabase:
                 ON history_changes(changed_at DESC)
             """)
 
+            # Table: parking_lots - Store parking lot configurations
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS parking_lots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    location_name TEXT NOT NULL UNIQUE,   -- Camera name (e.g., "Bãi A")
+                    capacity INTEGER DEFAULT 0,            -- Total parking spots
+                    camera_id INTEGER,                     -- Camera ID that manages this lot
+                    camera_type TEXT,                      -- Should be "PARKING_LOT"
+                    edge_id TEXT,                          -- Which edge this parking lot belongs to
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_parking_lots_location
+                ON parking_lots(location_name)
+            """)
+
             conn.commit()
             conn.close()
 
@@ -696,6 +715,98 @@ class CentralDatabase:
             conn.close()
 
             return rows_updated > 0
+
+    def get_vehicles_at_location(self, location):
+        """
+        Get all vehicles currently at a specific parking lot location
+        Returns list of vehicle dicts
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, plate_id, plate_view, entry_time,
+                       last_location, last_location_time, is_anomaly
+                FROM history
+                WHERE last_location = ? AND status = 'IN'
+                ORDER BY last_location_time DESC
+            """, (location,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            vehicles = []
+            for row in rows:
+                vehicles.append({
+                    "id": row["id"],
+                    "plate_id": row["plate_id"],
+                    "plate_view": row["plate_view"],
+                    "entry_time": row["entry_time"],
+                    "location": row["last_location"],
+                    "location_time": row["last_location_time"],
+                    "is_anomaly": row["is_anomaly"]
+                })
+            return vehicles
+
+    def save_parking_lot_config(self, location_name, capacity, camera_id, camera_type="PARKING_LOT", edge_id=None):
+        """
+        Save or update parking lot configuration to database
+        This allows parking lot config to persist even after camera type changes
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO parking_lots (location_name, capacity, camera_id, camera_type, edge_id, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(location_name) DO UPDATE SET
+                    capacity = excluded.capacity,
+                    camera_id = excluded.camera_id,
+                    camera_type = excluded.camera_type,
+                    edge_id = excluded.edge_id,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (location_name, capacity, camera_id, camera_type, edge_id))
+
+            conn.commit()
+            conn.close()
+            print(f"[CentralDB] Saved parking lot config: {location_name}, capacity={capacity}")
+
+    def get_all_parking_lots(self):
+        """
+        Get all parking lot configurations from database
+        Returns list of parking lot configs with their current occupancy
+        """
+        with self.lock:
+            conn = sqlite3.connect(self.db_file)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT id, location_name, capacity, camera_id, camera_type, edge_id, created_at, updated_at
+                FROM parking_lots
+                ORDER BY location_name
+            """)
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            parking_lots = []
+            for row in rows:
+                parking_lots.append({
+                    "id": row["id"],
+                    "location_name": row["location_name"],
+                    "capacity": row["capacity"],
+                    "camera_id": row["camera_id"],
+                    "camera_type": row["camera_type"],
+                    "edge_id": row["edge_id"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"]
+                })
+            return parking_lots
 
     def create_entry_from_parking_lot(self, event_id, source_central, edge_id,
                                        plate_id, plate_view, entry_time,

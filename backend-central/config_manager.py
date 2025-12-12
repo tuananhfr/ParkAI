@@ -31,7 +31,8 @@ class ConfigManager:
             edge_cameras[cam_id] = {
                 "name": cam_config.get("name", ""),
                 "ip": ip,
-                "camera_type": cam_config.get("camera_type", "ENTRY")  # ENTRY | EXIT
+                "camera_type": cam_config.get("camera_type", "ENTRY"),  # ENTRY | EXIT | PARKING_LOT
+                "parking_lot_capacity": cam_config.get("parking_lot_capacity", 0)  # Capacity for PARKING_LOT cameras
             }
 
         # Auto-detect Central IP neu khong co trong config hoac la "auto"

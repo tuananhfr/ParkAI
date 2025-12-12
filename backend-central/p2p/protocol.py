@@ -14,6 +14,7 @@ class MessageType(str, Enum):
     VEHICLE_ENTRY_CONFIRMED = "VEHICLE_ENTRY_CONFIRMED"
     VEHICLE_EXIT = "VEHICLE_EXIT"
     LOCATION_UPDATE = "LOCATION_UPDATE"  # PARKING_LOT camera location tracking
+    PARKING_LOT_CONFIG = "PARKING_LOT_CONFIG"  # PARKING_LOT camera config update
 
     # History admin operations
     HISTORY_UPDATE = "HISTORY_UPDATE"
@@ -211,6 +212,32 @@ def create_location_update_message(
             "location_time": location_time,
             "is_anomaly": is_anomaly
         }
+    )
+
+
+def create_parking_lot_config_message(
+    source_central: str,
+    location_name: str,
+    capacity: int,
+    camera_id: int,
+    camera_type: str = "PARKING_LOT",
+    edge_id: Optional[str] = None,
+    timestamp: Optional[int] = None
+) -> P2PMessage:
+    """
+    Create PARKING_LOT_CONFIG message to sync parking lot metadata across centrals.
+    """
+    return P2PMessage(
+        msg_type=MessageType.PARKING_LOT_CONFIG,
+        source_central=source_central,
+        timestamp=timestamp,
+        data={
+            "location_name": location_name,
+            "capacity": capacity,
+            "camera_id": camera_id,
+            "camera_type": camera_type,
+            "edge_id": edge_id,
+        },
     )
 
 

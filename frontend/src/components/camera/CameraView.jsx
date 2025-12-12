@@ -8,6 +8,7 @@ import VideoStream from "./video/VideoStream";
 import PlateImage from "./plate/PlateImage";
 import PlateInput from "./plate/PlateInput";
 import VehicleInfo from "./vehicle/VehicleInfo";
+import BarrierControls from "./barrier/BarrierControls";
 import Notification from "./ui/Notification";
 
 const CameraView = ({ camera, onHistoryUpdate }) => {
@@ -48,6 +49,12 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
   });
   const [userEdited, setUserEdited] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [barrierEnabled, setBarrierEnabled] = useState(false);
+  const [barrierStatus, setBarrierStatus] = useState({
+    is_open: false,
+    enabled: false,
+  });
+  const [isOpening, setIsOpening] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState(null);
   const [vehicleInfo, setVehicleInfo] = useState({
     entry_time: null,
@@ -87,6 +94,72 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
   useEffect(() => {
     plateTextRef.current = plateText;
   }, [plateText]);
+
+  //Fetch barrier config on mount and when window gains focus
+  useEffect(() => {
+    const fetchBarrierConfig = async () => {
+      try {
+        const response = await fetch(`${CENTRAL_URL}/api/config`);
+        const data = await response.json();
+        if (data.success && data.config?.barrier) {
+          setBarrierEnabled(data.config.barrier.enabled || false);
+        }
+      } catch (err) {
+        // Silent fail
+      }
+    };
+
+    // Fetch on mount
+    fetchBarrierConfig();
+
+    // Refetch when config is updated (from Settings)
+    const handleConfigUpdate = () => {
+      console.log('[CameraView] Config updated, refetching barrier config');
+      fetchBarrierConfig();
+    };
+
+    window.addEventListener('configUpdated', handleConfigUpdate);
+
+    // Refetch when window gains focus (user comes back after changing settings)
+    const handleFocus = () => {
+      fetchBarrierConfig();
+    };
+
+    window.addEventListener('focus', handleFocus);
+
+    // Also poll every 10 seconds to catch changes (fallback)
+    const interval = setInterval(fetchBarrierConfig, 10000);
+
+    return () => {
+      window.removeEventListener('configUpdated', handleConfigUpdate);
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(interval);
+    };
+  }, []);
+
+  //Fetch barrier status if enabled
+  useEffect(() => {
+    if (!barrierEnabled || !controlProxy?.barrier_status_url) return;
+
+    const fetchBarrierStatus = async () => {
+      try {
+        const response = await fetch(controlProxy.barrier_status_url);
+        if (response.ok) {
+          const result = await response.json();
+          if (result.success) {
+            setBarrierStatus({
+              is_open: result.is_open || false,
+              enabled: result.enabled || false,
+            });
+          }
+        }
+      } catch (err) {
+        // Silent fail
+      }
+    };
+
+    fetchBarrierStatus();
+  }, [barrierEnabled, controlProxy?.barrier_status_url]);
 
   //Fetch vehicle info when plate text changes
   useEffect(() => {
@@ -390,6 +463,16 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
 
           const message = JSON.parse(data);
 
+          // Handle barrier status updates
+          if (message.type === "barrier_status") {
+            const status = message.data || {};
+            setBarrierStatus({
+              is_open: status.is_open || false,
+              enabled: status.enabled !== undefined ? status.enabled : true,
+            });
+            return;
+          }
+
           if (message.type === "detections") {
             const detectionsData = message.data || [];
             lastDetectionsRef.current = detectionsData;
@@ -688,45 +771,105 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     userEditedRef.current = true;
     setPlateSource("manual");
 
-    // Gửi lưu entry thủ công TRỰC TIẾP ĐẾN EDGE (không qua Central!)
-    // Kiến trúc: Frontend → Edge API → Edge lưu DB → Edge sync to Central
-    // Lợi ích: Nếu Central down, Edge vẫn hoạt động bình thường
-    try {
-      // Lấy Edge URL từ control_proxy (mỗi camera có URL riêng)
-      const edgeUrl = controlProxy?.base_url || CENTRAL_URL;
+    // Lấy Edge URL từ control_proxy (mỗi camera có URL riêng)
+    const edgeUrl = controlProxy?.base_url || CENTRAL_URL;
 
-      const resp = await fetch(`${edgeUrl}/api/parking/manual-entry`, {
+    try {
+      // Nếu barrier enabled → Mở barrier (không lưu DB ngay)
+      if (barrierEnabled && controlProxy?.open_barrier_url) {
+        setIsOpening(true);
+        const resp = await fetch(`${edgeUrl}/api/open-barrier`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plate_text: normalizedPlate,
+            confidence: 1.0,
+            source: "manual",
+          }),
+        });
+
+        const result = await resp.json().catch(() => ({}));
+        setIsOpening(false);
+
+        if (resp.ok && result.success) {
+          setNotificationMessage(
+            message || `Barrier đã mở cho xe ${normalizedPlate}`
+          );
+        } else {
+          setNotificationMessage(
+            result.error || "Không thể mở barrier. Vui lòng thử lại."
+          );
+        }
+      } else {
+        // Nếu barrier disabled → Lưu DB ngay (logic cũ)
+        const resp = await fetch(`${edgeUrl}/api/parking/manual-entry`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plate_text: normalizedPlate,
+            camera_type: cameraInfo?.type || "ENTRY",
+          }),
+        });
+
+        const result = await resp.json().catch(() => ({}));
+
+        if (resp.ok && result.success) {
+          setNotificationMessage(
+            message || `Đã lưu: ${normalizedPlate} - ${result.message || ""}`
+          );
+          if (onHistoryUpdate) {
+            setTimeout(() => onHistoryUpdate(), 500);
+          }
+        } else {
+          setNotificationMessage(
+            result.error ||
+              "Lưu thủ công thất bại. Kiểm tra kết nối hoặc định dạng biển số."
+          );
+        }
+      }
+    } catch (err) {
+      setNotificationMessage(
+        "Không thể kết nối server. Vui lòng thử lại hoặc kiểm tra mạng."
+      );
+      setIsOpening(false);
+    }
+
+    // Tự clear thông báo sau một chút
+    setTimeout(() => {
+      setNotificationMessage(null);
+    }, 3000);
+  };
+
+  const handleCloseBarrier = async () => {
+    if (!controlProxy?.base_url) return;
+
+    try {
+      const edgeUrl = controlProxy.base_url || CENTRAL_URL;
+      const resp = await fetch(`${edgeUrl}/api/close-barrier`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          plate_text: normalizedPlate,
-          camera_type: cameraInfo?.type || "ENTRY",
-          // Không cần camera_id vì Edge biết camera của nó
-        }),
       });
 
       const result = await resp.json().catch(() => ({}));
 
       if (resp.ok && result.success) {
         setNotificationMessage(
-          message || `Đã lưu: ${normalizedPlate} - ${result.message || ""}`
+          result.entry_saved
+            ? "Barrier đã đóng và đã lưu DB"
+            : "Barrier đã đóng"
         );
-        if (onHistoryUpdate) {
+        if (result.entry_saved && onHistoryUpdate) {
           setTimeout(() => onHistoryUpdate(), 500);
         }
       } else {
         setNotificationMessage(
-          result.error ||
-            "Lưu thủ công thất bại. Kiểm tra kết nối hoặc định dạng biển số."
+          result.error || "Không thể đóng barrier. Vui lòng thử lại."
         );
       }
     } catch (err) {
-      setNotificationMessage(
-        "Không thể kết nối server. Vui lòng thử lại hoặc kiểm tra mạng."
-      );
+      setNotificationMessage("Không thể kết nối server.");
     }
 
-    // Tự clear thông báo sau một chút
     setTimeout(() => {
       setNotificationMessage(null);
     }, 3000);
@@ -775,6 +918,14 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
         />
 
         <VehicleInfo vehicleInfo={vehicleInfo} cameraType={cameraInfo?.type} />
+
+        {barrierEnabled && (
+          <BarrierControls
+            barrierStatus={barrierStatus}
+            isOpening={isOpening}
+            onCloseBarrier={handleCloseBarrier}
+          />
+        )}
 
         {cannotReadPlate && (
           <div
