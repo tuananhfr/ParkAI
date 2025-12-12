@@ -3,10 +3,13 @@ Edge Backend Configuration
 """
 import os
 
+# Base directory (folder chứa file config.py) để build đường dẫn tuyệt đối an toàn
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # CONFIG - OPTIMAL FOR SMOOTH VIDEO
 # Plate detection model (IMX500)
-MODEL_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/network.rpk"
-LABELS_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/labels.txt"
+MODEL_PATH = os.path.join(BASE_DIR, "models", "network.rpk")
+LABELS_PATH = os.path.join(BASE_DIR, "models", "labels.txt")
 
 # Camera settings - nang len 720p de stream ro net hon
 RESOLUTION_WIDTH = 1280
@@ -58,7 +61,7 @@ PLATE_SIMILARITY_THRESHOLD = 0.85  # 85% giong nhau moi group
 EARLY_STOP_ENABLED = True     # BAT - Stop ngay khi du 2 votes
 
 # ONNX OCR model (YOLO tu load class names)
-ONNX_OCR_MODEL_PATH = "/home/phamt/Desktop/parkAI/backend-edge1/models/ocr.onnx"
+ONNX_OCR_MODEL_PATH = os.path.join(BASE_DIR, "models", "ocr.onnx")
 
 # Server settings
 SERVER_HOST = "0.0.0.0"
