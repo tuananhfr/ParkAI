@@ -49,14 +49,9 @@ class DetectionService:
         # Plate tracker - Vote cho plate chinh xac nhat
         self.plate_tracker = get_plate_tracker()
 
-        # DON GIAN: CHI CAPTURE VA OCR
-        # Capture anh tinh khi confidence cao, OCR tren anh da capture
-        self.captured_frame_full = None      # Full crop chua preprocess (de gui frontend)
-        self.capture_timestamp = None        # Thoi diem capture
-        self.is_processing = False           # Dang xu ly plate da capture
-        self.ocr_attempts = 0                # So lan da chay OCR tren capture
-        self.last_processed_time = 0         # Thoi diem xu ly xong (cooldown)
-        self.captured_bbox = None            # Bbox cua plate da capture
+        # MULTI-TARGET SUPPORT: Track each plate individually
+        # Mỗi plate có riêng state: captured_frame, bbox, timestamp, ocr_attempts
+        self.processing_plates = {}          # {plate_key: processing_data}
         self.processed_plates = {}           # {plate_id: timestamp} - Track plates da process trong 15s
 
         # Statistics for debugging
@@ -79,6 +74,35 @@ class DetectionService:
         if self.detection_thread:
             self.detection_thread.join(timeout=2)
 
+    def _get_plate_key(self, bbox):
+        """Convert bbox to hashable key (rounded to 10px tolerance)"""
+        x, y, w, h = bbox
+        return (round(x / 10) * 10, round(y / 10) * 10, round(w / 10) * 10, round(h / 10) * 10)
+
+    def _cleanup_old_processing_plates(self, current_time):
+        """Xóa plates đã xử lý xong hoặc timeout"""
+        timeout = config.CAPTURE_TIMEOUT
+        keys_to_remove = []
+
+        for key, data in self.processing_plates.items():
+            # Remove if: OCR done OR timeout
+            if data.get('done') or (current_time - data.get('timestamp', 0) > timeout):
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            del self.processing_plates[key]
+
+    def _is_plate_ready_to_capture(self, plate_key, confidence, current_time):
+        """Check if plate can be captured (not already processing and meets confidence)"""
+        # Check if already processing this plate
+        if plate_key in self.processing_plates:
+            return False
+
+        # Check confidence threshold
+        if confidence < config.CAPTURE_CONFIDENCE_THRESHOLD:
+            return False
+
+        return True
 
     def _detection_loop(self):
         """Loop detection - TẬN DỤNG IMX500, CHỈ PARSE METADATA"""
@@ -99,6 +123,10 @@ class DetectionService:
                 # Parse detections tu IMX500 metadata (da co bbox san)
                 detections = self._parse_detections(metadata, cached_outputs)
 
+                # DEBUG: Log số lượng detections
+                if len(detections) > 0:
+                    print(f"[DEBUG] Frame {frame_id}: Detected {len(detections)} plates")
+
                 # Update stats
                 self.total_frames += 1
                 self.frames_in_second += 1
@@ -116,12 +144,8 @@ class DetectionService:
                 # Check timeout/cooldown de reset state
                 current_time = time.time()
 
-                # Check timeout: Neu dang processing qua lau (> CAPTURE_TIMEOUT) → Reset
-                if (self.is_processing and 
-                    self.capture_timestamp is not None and
-                    current_time - self.capture_timestamp > config.CAPTURE_TIMEOUT):
-                    self.last_processed_time = current_time
-                    self._reset_capture_state()
+                # Cleanup old processing plates (timeout or done)
+                self._cleanup_old_processing_plates(current_time)
 
                 # Convert detections
                 detection_results = []
@@ -144,24 +168,14 @@ class DetectionService:
                         'frame_id': frame_id
                     }
 
-                    # == CAPTURE LOGIC: Capture anh khi confidence CAO ==
-                    # Chi capture KHI:
-                    # 1. KHONG dang xu ly plate khac
-                    # 2. Confidence >= CAPTURE_CONFIDENCE_THRESHOLD
-                    # 3. Da qua cooldown (2s sau lan xu ly truoc)
+                    # == MULTI-TARGET CAPTURE LOGIC ==
+                    # Capture mỗi plate riêng biệt (không block nhau)
 
                     bbox = (x, y, w, h)
+                    plate_key = self._get_plate_key(bbox)
 
-                    # Check cooldown
-                    cooldown_ok = (current_time - self.last_processed_time >= config.CAPTURE_COOLDOWN)
-                    
-
-                    # Chi capture neu:
-                    # 1. Khong dang xu ly plate khac
-                    # 2. Da qua cooldown
-                    if (not self.is_processing and
-                        cooldown_ok and
-                        confidence >= config.CAPTURE_CONFIDENCE_THRESHOLD and
+                    # Check if this plate can be captured
+                    if (self._is_plate_ready_to_capture(plate_key, confidence, current_time) and
                         frame is not None):
 
                         try:
@@ -180,15 +194,17 @@ class DetectionService:
                                 crop = frame[y_valid:y_valid+h_valid, x_valid:x_valid+w_valid]
 
                                 if crop.size > 0:
-                                    # CAPTURE! Luu anh de xu ly
-                                    self.captured_frame_full = crop.copy()  # RAW crop (gui frontend)
-                                    self.captured_bbox = bbox
-                                    self.capture_timestamp = current_time
-                                    self.is_processing = True
-                                    self.ocr_attempts = 0
+                                    # CAPTURE! Luu state cho plate nay
+                                    self.processing_plates[plate_key] = {
+                                        'captured_frame': crop.copy(),
+                                        'bbox': bbox,
+                                        'timestamp': current_time,
+                                        'ocr_attempts': 0,
+                                        'done': False,
+                                        'confidence': confidence
+                                    }
 
-                                    # FLOW MOI: GUI ANH NGAY (chua co text)
-                                    # BUOC 1: Encode va gui anh ve frontend NGAY (chua OCR)
+                                    # GUI ANH NGAY (chua co text)
                                     _, buffer = cv2.imencode('.jpg', crop)
                                     crop_base64 = base64.b64encode(buffer).decode('utf-8')
 
@@ -210,171 +226,172 @@ class DetectionService:
                     # LUON ADD detection vao results
                     detection_results.append(detection_dict)
 
-                # == OCR ON CAPTURED FRAME (TRIGGER-BASED) ==
-                # Chi chay OCR tren anh da CAPTURE, KHONG chay moi frame!
+                # == MULTI-TARGET OCR ==
+                # Process OCR for ALL captured plates (not just one)
 
-                if (self.is_processing and
-                    self.captured_frame_full is not None and
-                    self.ocr_attempts < config.MAX_OCR_ATTEMPTS and
-                    config.ENABLE_OCR and
+                if (config.ENABLE_OCR and
                     self.ocr_service and
                     self.ocr_service.is_ready()):
 
-                    try:
-                        import cv2
+                    # Process each captured plate
+                    for plate_key, plate_data in list(self.processing_plates.items()):
+                        # Skip if already done or exceeded max attempts
+                        if plate_data.get('done') or plate_data.get('ocr_attempts', 0) >= config.MAX_OCR_ATTEMPTS:
+                            continue
 
-                        # Lay crop da capture
-                        crop = self.captured_frame_full.copy()
-                        h, w = crop.shape[:2]
+                        try:
+                            import cv2
 
-                        # Preprocessing
-                        # 1. Resize neu qua nho
-                        if h < 60:
-                            scale = 60 / h
-                            new_w = int(w * scale)
-                            crop = cv2.resize(crop, (new_w, 60), interpolation=cv2.INTER_CUBIC)
+                            # Lay crop da capture cho plate nay
+                            crop = plate_data['captured_frame'].copy()
+                            bbox = plate_data['bbox']
+                            h, w = crop.shape[:2]
 
-                        # 2. Denoise
-                        crop = cv2.fastNlMeansDenoisingColored(crop, None, 10, 10, 7, 21)
+                            # Preprocessing
+                            # 1. Resize neu qua nho
+                            if h < 60:
+                                scale = 60 / h
+                                new_w = int(w * scale)
+                                crop = cv2.resize(crop, (new_w, 60), interpolation=cv2.INTER_CUBIC)
 
-                        # 3. CLAHE
-                        lab = cv2.cvtColor(crop, cv2.COLOR_RGB2LAB)
-                        l, a, b = cv2.split(lab)
-                        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-                        l = clahe.apply(l)
-                        crop = cv2.cvtColor(cv2.merge([l,a,b]), cv2.COLOR_LAB2RGB)
+                            # 2. Denoise
+                            crop = cv2.fastNlMeansDenoisingColored(crop, None, 10, 10, 7, 21)
 
-                        # OCR
-                        self.ocr_attempts += 1
-                        text = self.ocr_service.recognize(crop)
+                            # 3. CLAHE
+                            lab = cv2.cvtColor(crop, cv2.COLOR_RGB2LAB)
+                            l, a, b = cv2.split(lab)
+                            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                            l = clahe.apply(l)
+                            crop = cv2.cvtColor(cv2.merge([l,a,b]), cv2.COLOR_LAB2RGB)
 
-                        if text and self._is_valid_vietnamese_plate(text):
-                            # OCR thanh cong!
+                            # OCR
+                            plate_data['ocr_attempts'] += 1
+                            text = self.ocr_service.recognize(crop)
 
-                            # BUOC 1: CHECK BIEN SO CO TRONG GARA CHUA
-                            validation_result = self._validate_plate_for_gate(text)
+                            if text and self._is_valid_vietnamese_plate(text):
+                                # OCR thanh cong!
 
-                            # Deduplication - Da process plate nay trong 15s gan day chua?
-                            import re
-                            plate_normalized = re.sub(r'[^A-Z0-9]', '', text.upper())
-                            current_time_check = time.time()
+                                # BUOC 1: CHECK BIEN SO CO TRONG GARA CHUA
+                                validation_result = self._validate_plate_for_gate(text)
 
-                            # Clean expired entries
-                            expired = [p for p, t in self.processed_plates.items() if current_time_check - t > 15.0]
-                            for p in expired:
-                                del self.processed_plates[p]
+                                # Deduplication - Da process plate nay trong 15s gan day chua?
+                                import re
+                                plate_normalized = re.sub(r'[^A-Z0-9]', '', text.upper())
+                                current_time_check = time.time()
 
-                            # Check duplicate
-                            if plate_normalized in self.processed_plates:
-                                self.ocr_attempts = config.MAX_OCR_ATTEMPTS
-                                continue
+                                # Clean expired entries
+                                expired = [p for p, t in self.processed_plates.items() if current_time_check - t > 15.0]
+                                for p in expired:
+                                    del self.processed_plates[p]
 
-                            # Mark as processed
-                            self.processed_plates[plate_normalized] = current_time_check
+                                # Check duplicate
+                                if plate_normalized in self.processed_plates:
+                                    plate_data['done'] = True  # Mark as done
+                                    continue
 
-                            # BUOC 2: TU DONG LUU DB NEU VALID
-                            entry_saved = False
-                            entry_result = None
+                                # Mark as processed
+                                self.processed_plates[plate_normalized] = current_time_check
 
-                            if validation_result['status'] == 'valid' and self.parking_manager:
-                                # Luu vao DB ngay (khong can barrier)
-                                entry_result = self.parking_manager.process_entry(
-                                    plate_text=text,
-                                    camera_id=config.CAMERA_ID,
-                                    camera_type=config.CAMERA_TYPE,
-                                    camera_name=config.CAMERA_NAME,
-                                    confidence=0.95,
-                                    source='auto'
-                                )
+                                # BUOC 2: TU DONG LUU DB NEU VALID
+                                entry_saved = False
+                                entry_result = None
 
-                                # Check if skipped (already at location)
-                                if entry_result.get('skip'):
-                                    # SKIP: Xe đã ở vị trí này rồi, không cần sync
-                                    print(f"[SKIP] {text} - {entry_result.get('message')}")
-                                elif entry_result.get('success'):
-                                    entry_saved = True
-                                    print(f"Auto saved: {text} - {entry_result.get('message')}")
+                                if validation_result['status'] == 'valid' and self.parking_manager:
+                                    # Luu vao DB ngay (khong can barrier)
+                                    entry_result = self.parking_manager.process_entry(
+                                        plate_text=text,
+                                        camera_id=config.CAMERA_ID,
+                                        camera_type=config.CAMERA_TYPE,
+                                        camera_name=config.CAMERA_NAME,
+                                        confidence=0.95,
+                                        source='auto'
+                                    )
 
-                                    # Sync to Central (neu co)
-                                    if self.central_sync:
-                                        # Determine event type based on camera type and action
-                                        action = entry_result.get('action', '')
+                                    # Check if skipped (already at location)
+                                    if entry_result.get('skip'):
+                                        # SKIP: Xe đã ở vị trí này rồi, không cần sync
+                                        print(f"[SKIP] {text} - {entry_result.get('message')}")
+                                    elif entry_result.get('success'):
+                                        entry_saved = True
+                                        print(f"Auto saved: {text} - {entry_result.get('message')}")
 
-                                        if config.CAMERA_TYPE == "PARKING_LOT":
-                                            # PARKING_LOT camera: LOCATION_UPDATE or AUTO_ENTRY
-                                            if action == "LOCATION_UPDATE":
-                                                event_type = "LOCATION_UPDATE"
-                                            elif action == "AUTO_ENTRY":
-                                                event_type = "ENTRY"  # Auto-created entry (anomaly)
+                                        # Sync to Central (neu co)
+                                        if self.central_sync:
+                                            # Determine event type based on camera type and action
+                                            action = entry_result.get('action', '')
+
+                                            if config.CAMERA_TYPE == "PARKING_LOT":
+                                                # PARKING_LOT camera: LOCATION_UPDATE or AUTO_ENTRY
+                                                if action == "LOCATION_UPDATE":
+                                                    event_type = "LOCATION_UPDATE"
+                                                elif action == "AUTO_ENTRY":
+                                                    event_type = "ENTRY"  # Auto-created entry (anomaly)
+                                                else:
+                                                    event_type = "LOCATION_UPDATE"  # Default for parking lot
+                                            elif config.CAMERA_TYPE == "ENTRY":
+                                                event_type = "ENTRY"
                                             else:
-                                                event_type = "LOCATION_UPDATE"  # Default for parking lot
-                                        elif config.CAMERA_TYPE == "ENTRY":
-                                            event_type = "ENTRY"
-                                        else:
-                                            event_type = "EXIT"
+                                                event_type = "EXIT"
 
-                                        sync_data = {
-                                            "plate_text": text,
-                                            "plate_id": entry_result.get("plate_id"),
-                                            "confidence": 0.95,
-                                            "source": "auto",
-                                            "event_id": entry_result.get("event_id"),  # Include event_id
-                                        }
+                                            sync_data = {
+                                                "plate_text": text,
+                                                "plate_id": entry_result.get("plate_id"),
+                                                "confidence": 0.95,
+                                                "source": "auto",
+                                                "event_id": entry_result.get("event_id"),  # Include event_id
+                                            }
 
-                                        # Add type-specific data
-                                        if event_type == "ENTRY":
-                                            sync_data['entry_id'] = entry_result.get('entry_id')
-                                            sync_data['entry_time'] = entry_result.get('entry_time')
-                                            # Include anomaly flag if auto-created
-                                            if entry_result.get('is_anomaly'):
-                                                sync_data['is_anomaly'] = True
-                                        elif event_type == "EXIT":
-                                            sync_data['entry_id'] = entry_result.get('entry_id')
-                                            if entry_result.get('duration'):
-                                                sync_data['duration'] = entry_result.get('duration')
-                                            if entry_result.get('fee') is not None:
-                                                sync_data['fee'] = entry_result.get('fee')
-                                        elif event_type == "LOCATION_UPDATE":
-                                            sync_data['location'] = entry_result.get('location')
-                                            sync_data['location_time'] = entry_result.get('location_time')
+                                            # Add type-specific data
+                                            if event_type == "ENTRY":
+                                                sync_data['entry_id'] = entry_result.get('entry_id')
+                                                sync_data['entry_time'] = entry_result.get('entry_time')
+                                                # Include anomaly flag if auto-created
+                                                if entry_result.get('is_anomaly'):
+                                                    sync_data['is_anomaly'] = True
+                                            elif event_type == "EXIT":
+                                                sync_data['entry_id'] = entry_result.get('entry_id')
+                                                if entry_result.get('duration'):
+                                                    sync_data['duration'] = entry_result.get('duration')
+                                                if entry_result.get('fee') is not None:
+                                                    sync_data['fee'] = entry_result.get('fee')
+                                            elif event_type == "LOCATION_UPDATE":
+                                                sync_data['location'] = entry_result.get('location')
+                                                sync_data['location_time'] = entry_result.get('location_time')
 
-                                        self.central_sync.send_event(event_type, sync_data)
+                                            self.central_sync.send_event(event_type, sync_data)
 
-                            # BUOC 3: GUI KET QUA QUA WEBSOCKET
-                            text_result = {
-                                'class': 'license_plate',
-                                'confidence': 0.95,
-                                'bbox': list(self.captured_bbox),
-                                'text': text,
-                                'finalized': True,
-                                'ocr_status': 'success',
-                                'validation_status': validation_result['status'],
-                                'validation_message': validation_result.get('message', ''),
-                                'entry_saved': entry_saved,  # Flag: đã lưu DB chưa
-                                'entry_result': entry_result,  # Kết quả lưu DB (nếu có)
-                                'timestamp': time.time(),
-                                'frame_id': frame_id
-                            }
+                                # BUOC 3: GUI KET QUA QUA WEBSOCKET
+                                text_result = {
+                                    'class': 'license_plate',
+                                    'confidence': 0.95,
+                                    'bbox': list(bbox),
+                                    'text': text,
+                                    'finalized': True,
+                                    'ocr_status': 'success',
+                                    'validation_status': validation_result['status'],
+                                    'validation_message': validation_result.get('message', ''),
+                                    'entry_saved': entry_saved,  # Flag: đã lưu DB chưa
+                                    'entry_result': entry_result,  # Kết quả lưu DB (nếu có)
+                                    'timestamp': time.time(),
+                                    'frame_id': frame_id
+                                }
 
-                            # Gui TEXT qua WebSocket
-                            self.websocket_manager.broadcast_detections([text_result])
+                                # Gui TEXT qua WebSocket
+                                self.websocket_manager.broadcast_detections([text_result])
 
-                            # Reset state de san sang cho plate tiep theo
-                            self.last_processed_time = current_time_check
-                            self._reset_capture_state()
+                                # Mark plate as done (OCR success)
+                                plate_data['done'] = True
 
-                        else:
-                            # OCR khong hop le
+                            else:
+                                # OCR khong hop le
+                                # Neu da het attempts → Mark as done
+                                if plate_data.get('ocr_attempts', 0) >= config.MAX_OCR_ATTEMPTS:
+                                    plate_data['done'] = True
 
-                            # Neu da het attempts → OCR FAIL → Reset ngay (khong mo barrier)
-                            if self.ocr_attempts >= config.MAX_OCR_ATTEMPTS:
-                                self.last_processed_time = current_time
-                                self._reset_capture_state()
-
-                    except Exception as e:
-                        # Reset neu loi (OCR error)
-                        self.last_processed_time = current_time
-                        self._reset_capture_state()
+                        except Exception as e:
+                            # Mark plate as done on error
+                            plate_data['done'] = True
+                            print(f"[OCR Error] {e}")
 
                 if len(detection_results) > 0:
                     self.total_detections += len(detection_results)
@@ -514,15 +531,6 @@ class DetectionService:
             return True
 
         return False
-
-    def _reset_capture_state(self):
-        """Reset capture state để chờ plate tiếp theo"""
-        self.captured_frame_full = None
-        self.capture_timestamp = None
-        self.is_processing = False
-        self.ocr_attempts = 0
-        self.captured_bbox = None
-
 
     def _validate_plate_for_gate(self, plate_text):
         """

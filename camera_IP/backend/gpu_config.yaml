@@ -1,0 +1,89 @@
+# GPU Configuration for Batch Detection Service
+# Tùy chỉnh theo GPU của bạn
+
+gpu:
+  # Auto-detect GPU và tự động điều chỉnh batch size
+  # Nếu muốn fix batch size, set giá trị cụ thể (1-16)
+  # Để auto, set: auto
+  batch_size: auto
+
+  # Target input size cho YOLO (nhỏ hơn = nhanh hơn nhưng ít chính xác hơn)
+  # Khuyến nghị: 640 (chuẩn), 480 (nhanh hơn), 1280 (chính xác hơn)
+  input_size: 640
+
+  # Device
+  # auto: Tự động chọn cuda nếu có, không thì cpu
+  # cuda: Force sử dụng GPU (lỗi nếu không có GPU)
+  # cpu: Force sử dụng CPU
+  device: auto
+
+  # FP16 inference (half precision) - nhanh hơn 2x trên GPU hỗ trợ
+  # Chỉ hoạt động trên GPU NVIDIA (Turing trở lên: RTX 20xx, 30xx, 40xx)
+  # AMD GPU và CPU không hỗ trợ
+  fp16: false
+
+camera:
+  # Max frame queue size (số frames buffer tối đa)
+  # Tăng nếu muốn smooth hơn nhưng tốn RAM
+  # Giảm nếu muốn latency thấp
+  max_queue_size: 100
+
+  # Frame skip - bỏ qua N frames để giảm tải GPU
+  # 0 = xử lý mọi frame
+  # 1 = bỏ 1 frame, xử lý 1 frame (xử lý 50%)
+  # 2 = bỏ 2 frame, xử lý 1 frame (xử lý 33%)
+  frame_skip: 0
+
+  # Timeout để tạo batch (ms)
+  # Tăng nếu có ít camera (1-2 cameras) để tận dụng batch
+  # Giảm nếu có nhiều camera (6-8 cameras) để giảm latency
+  batch_timeout_ms: 50
+
+detection:
+  # Default confidence threshold
+  conf_threshold: 0.25
+
+  # Default IOU threshold for NMS
+  iou_threshold: 0.45
+
+performance:
+  # Enable statistics logging
+  enable_stats: true
+
+  # Stats logging interval (seconds)
+  stats_interval: 10
+
+  # Enable GPU memory monitoring
+  monitor_gpu_memory: true
+
+# Khuyến nghị cho các loại GPU:
+# =====================================
+# RTX 4090 / A6000 (24GB):
+#   batch_size: 16
+#   input_size: 1280
+#   fp16: true
+#
+# RTX 3080 / 3090 / A4000 (10-12GB):
+#   batch_size: 8
+#   input_size: 640
+#   fp16: true
+#
+# RTX 3070 / 4060 Ti (8GB):
+#   batch_size: 6
+#   input_size: 640
+#   fp16: true
+#
+# RTX 3060 / 1660 Ti (6GB):
+#   batch_size: 4
+#   input_size: 640
+#   fp16: false
+#
+# GTX 1650 / 1050 Ti (4GB):
+#   batch_size: 2
+#   input_size: 480
+#   fp16: false
+#
+# CPU only:
+#   batch_size: 1
+#   input_size: 480
+#   device: cpu

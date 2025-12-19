@@ -1,0 +1,21 @@
+api:
+  listen: :1984
+  origin: '*'
+log:
+  format: text
+  level: info
+rtsp:
+  listen: :8554
+streams:
+  camera_1765877404751: rtsp://tuananh:tuananh123@192.168.0.156/1/stream1#video=copy#audio=copy
+webrtc:
+  listen: :8555
+  candidates:
+  - stun:8555
+  ice_servers:
+  - urls:
+    - stun:stun.l.google.com:19302
+metadata:
+  camera_1765877404751:
+    name: văn phòng
+    type: rtsp

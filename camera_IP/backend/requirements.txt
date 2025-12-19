@@ -1,0 +1,11 @@
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+PyYAML==6.0.1
+aiohttp==3.9.1
+opencv-python==4.9.0.80
+numpy==1.26.3
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.0.0
+python-multipart==0.0.6

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License Plate Detection - Live Stream</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #00ff00;
+            text-align: center;
+        }
+
+        .controls {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+        }
+
+        .video-container {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        img {
+            max-width: 100%;
+            height: auto;
+            border: 3px solid #00ff00;
+            border-radius: 8px;
+            background-color: #000;
+        }
+
+        input, select, button {
+            padding: 10px;
+            margin: 5px;
+            font-size: 14px;
+            border-radius: 4px;
+        }
+
+        input, select {
+            background-color: #333;
+            color: #fff;
+            border: 1px solid #555;
+        }
+
+        button {
+            background-color: #00ff00;
+            color: #000;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #00cc00;
+        }
+
+        .info {
+            padding: 15px;
+            margin: 20px 0;
+            background-color: #2a2a2a;
+            border-left: 4px solid #00ff00;
+            border-radius: 4px;
+        }
+
+        .url-display {
+            background-color: #111;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 License Plate Detection - Live Stream</h1>
+
+        <div class="info">
+            <strong>📺 SIÊU ĐƠN GIẢN!</strong><br>
+            Stream video với bounding boxes đã vẽ sẵn - giống backend-edge1!<br>
+            Không cần WebSocket, không cần Canvas - chỉ cần <code>&lt;img&gt;</code> tag!
+        </div>
+
+        <div class="controls">
+            <h3>Stream Controls</h3>
+
+            <label><strong>Chọn camera:</strong></label><br>
+            <select id="cameraSelect" onchange="updateStreamUrl()">
+                <option value="camera1">Camera 1 (từ config)</option>
+                <option value="rtsp">Custom RTSP URL</option>
+                <option value="webcam">Webcam (0)</option>
+            </select>
+            <br><br>
+
+            <div id="rtspUrlDiv" style="display:none;">
+                <label><strong>RTSP URL:</strong></label><br>
+                <input type="text" id="rtspUrl" placeholder="rtsp://..." style="width: 500px;" />
+                <br><br>
+            </div>
+
+            <label><strong>Confidence Threshold:</strong></label>
+            <input type="number" id="confThreshold" value="0.25" step="0.05" min="0" max="1" onchange="updateStreamUrl()" />
+
+            <label><strong>IOU Threshold:</strong></label>
+            <input type="number" id="iouThreshold" value="0.45" step="0.05" min="0" max="1" onchange="updateStreamUrl()" />
+
+            <br><br>
+            <button onclick="startStream()">▶️ Start Stream</button>
+            <button onclick="stopStream()" style="background-color: #ff0000; color: #fff;">⏹️ Stop Stream</button>
+        </div>
+
+        <div class="info">
+            <strong>Stream URL:</strong>
+            <div class="url-display" id="streamUrl">-</div>
+        </div>
+
+        <div class="video-container">
+            <img id="videoStream" style="display:none;" />
+            <div id="placeholder" style="padding: 100px; background-color: #000; border: 3px dashed #555; border-radius: 8px;">
+                <h2 style="color: #666;">Video stream will appear here</h2>
+                <p style="color: #888;">Click "▶️ Start Stream" to begin</p>
+            </div>
+        </div>
+
+        <div class="info">
+            <h3>📖 Hướng dẫn:</h3>
+            <ul>
+                <li><strong>Camera 1:</strong> Sử dụng camera đã config trong go2rtc.yaml</li>
+                <li><strong>Custom RTSP:</strong> Nhập RTSP URL của bạn</li>
+                <li><strong>Webcam:</strong> Sử dụng webcam mặc định (index 0)</li>
+            </ul>
+            <p><strong>Green boxes</strong> sẽ tự động vẽ lên video khi phát hiện biển số!</p>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+        let currentStreamUrl = '';
+
+        function updateStreamUrl() {
+            const cameraSelect = document.getElementById('cameraSelect').value;
+            const confThreshold = document.getElementById('confThreshold').value;
+            const iouThreshold = document.getElementById('iouThreshold').value;
+
+            let url = '';
+
+            if (cameraSelect === 'camera1') {
+                // Camera from config
+                url = `${API_URL}/api/stream/camera1?conf_threshold=${confThreshold}&iou_threshold=${iouThreshold}`;
+                document.getElementById('rtspUrlDiv').style.display = 'none';
+            } else if (cameraSelect === 'rtsp') {
+                // Custom RTSP
+                const rtspUrl = document.getElementById('rtspUrl').value || 'rtsp://...';
+                url = `${API_URL}/api/stream/rtsp?rtsp_url=${encodeURIComponent(rtspUrl)}&conf_threshold=${confThreshold}&iou_threshold=${iouThreshold}`;
+                document.getElementById('rtspUrlDiv').style.display = 'block';
+            } else if (cameraSelect === 'webcam') {
+                // Webcam
+                url = `${API_URL}/api/stream/rtsp?rtsp_url=0&conf_threshold=${confThreshold}&iou_threshold=${iouThreshold}`;
+                document.getElementById('rtspUrlDiv').style.display = 'none';
+            }
+
+            currentStreamUrl = url;
+            document.getElementById('streamUrl').textContent = url;
+        }
+
+        function startStream() {
+            updateStreamUrl();
+
+            if (!currentStreamUrl) {
+                alert('Please configure stream URL');
+                return;
+            }
+
+            const videoStream = document.getElementById('videoStream');
+            const placeholder = document.getElementById('placeholder');
+
+            // Set stream URL
+            videoStream.src = currentStreamUrl;
+            videoStream.style.display = 'block';
+            placeholder.style.display = 'none';
+
+            console.log('[STREAM] Started:', currentStreamUrl);
+        }
+
+        function stopStream() {
+            const videoStream = document.getElementById('videoStream');
+            const placeholder = document.getElementById('placeholder');
+
+            videoStream.src = '';
+            videoStream.style.display = 'none';
+            placeholder.style.display = 'block';
+
+            console.log('[STREAM] Stopped');
+        }
+
+        // Initialize
+        updateStreamUrl();
+    </script>
+</body>
+</html>

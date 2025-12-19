@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License Plate Detection - Simple Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #00ff00;
+            text-align: center;
+        }
+
+        .controls {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+        }
+
+        .video-container {
+            text-align: center;
+            margin: 20px 0;
+            background-color: #000;
+            border: 3px solid #00ff00;
+            border-radius: 8px;
+            min-height: 480px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #videoFrame {
+            max-width: 100%;
+            height: auto;
+            display: none;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #00ff00;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background-color: #00cc00;
+        }
+
+        button.stop {
+            background-color: #ff0000;
+            color: #fff;
+        }
+
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #333;
+            border-left: 4px solid #00ff00;
+            border-radius: 4px;
+        }
+
+        input {
+            padding: 8px;
+            margin: 5px;
+            background-color: #333;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+
+        .placeholder {
+            color: #666;
+            padding: 100px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 License Plate Detection - Simple Viewer</h1>
+        <p style="text-align: center; color: #888;">
+            Backend vẽ box → Gửi frame qua WebSocket → Frontend hiển thị (giống backend-edge1)
+        </p>
+
+        <div class="controls">
+            <h3>Controls</h3>
+
+            <label>RTSP URL / Camera Index:</label>
+            <input type="text" id="rtspUrl" value="0" placeholder="0 for webcam or rtsp://..." style="width: 400px;" />
+
+            <label>Confidence:</label>
+            <input type="number" id="confThreshold" value="0.25" step="0.05" min="0" max="1" />
+
+            <br><br>
+
+            <button onclick="startDetection()">▶️ Start Detection</button>
+            <button class="stop" onclick="stopDetection()">⏹️ Stop Detection</button>
+        </div>
+
+        <div class="status" id="status">
+            Status: Not connected
+        </div>
+
+        <div class="video-container">
+            <img id="videoFrame" />
+            <div class="placeholder" id="placeholder">
+                <h2>Video stream will appear here</h2>
+                <p>Click "▶️ Start Detection" to begin</p>
+            </div>
+        </div>
+
+        <div class="status">
+            <strong>FPS:</strong> <span id="fps">0</span> |
+            <strong>Detections:</strong> <span id="detectionCount">0</span> |
+            <strong>WebSocket:</strong> <span id="wsStatus">Disconnected</span>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+        const WS_URL = 'ws://localhost:5000/ws/detections';
+
+        let ws = null;
+        let frameCount = 0;
+        let lastFrameTime = Date.now();
+        let fps = 0;
+
+        const videoFrame = document.getElementById('videoFrame');
+        const placeholder = document.getElementById('placeholder');
+
+        // Connect WebSocket
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                return;
+            }
+
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                console.log('[WS] Connected');
+                document.getElementById('wsStatus').textContent = 'Connected ✅';
+                document.getElementById('status').textContent = 'Status: WebSocket connected';
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'detections') {
+                    // Backend-edge1 style: chỉ có detections, không có frame
+                    // (Frontend vẽ canvas lên go2rtc stream)
+                    return;
+                }
+
+                // New style: Backend gửi frame đã vẽ box
+                if (data.frame) {
+                    // Hiển thị frame
+                    videoFrame.src = 'data:image/jpeg;base64,' + data.frame;
+                    videoFrame.style.display = 'block';
+                    placeholder.style.display = 'none';
+
+                    // Update stats
+                    frameCount++;
+                    const now = Date.now();
+                    const elapsed = (now - lastFrameTime) / 1000;
+                    if (elapsed >= 1) {
+                        fps = Math.round(frameCount / elapsed);
+                        document.getElementById('fps').textContent = fps;
+                        frameCount = 0;
+                        lastFrameTime = now;
+                    }
+
+                    const detections = data.detections || [];
+                    document.getElementById('detectionCount').textContent = detections.length;
+
+                    if (detections.length > 0) {
+                        console.log(`[FRAME ${data.frame_id}] ${detections.length} detection(s)`);
+                    }
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('[WS] Error:', error);
+                document.getElementById('wsStatus').textContent = 'Error ❌';
+            };
+
+            ws.onclose = () => {
+                console.log('[WS] Disconnected');
+                document.getElementById('wsStatus').textContent = 'Disconnected ⚠️';
+            };
+        }
+
+        // Start detection
+        async function startDetection() {
+            const rtspUrl = document.getElementById('rtspUrl').value;
+            const confThreshold = parseFloat(document.getElementById('confThreshold').value);
+
+            try {
+                // Start backend detection
+                const response = await fetch(
+                    `${API_URL}/api/detection/start/camera1?rtsp_url=${encodeURIComponent(rtspUrl)}&conf_threshold=${confThreshold}`,
+                    { method: 'POST' }
+                );
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('status').textContent = `Status: ${result.message}`;
+
+                    // Connect WebSocket
+                    connectWebSocket();
+                } else {
+                    alert('Failed to start detection');
+                }
+            } catch (error) {
+                console.error('[ERROR]', error);
+                alert('Error: ' + error);
+            }
+        }
+
+        // Stop detection
+        async function stopDetection() {
+            try {
+                const response = await fetch(`${API_URL}/api/detection/stop/camera1`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                document.getElementById('status').textContent = `Status: ${result.message}`;
+
+                // Hide video
+                videoFrame.style.display = 'none';
+                placeholder.style.display = 'block';
+
+                // Close WebSocket
+                if (ws) {
+                    ws.close();
+                }
+            } catch (error) {
+                console.error('[ERROR]', error);
+            }
+        }
+
+        // Auto-connect WebSocket
+        connectWebSocket();
+    </script>
+</body>
+</html>

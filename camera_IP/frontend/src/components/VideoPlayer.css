@@ -1,0 +1,37 @@
+/* Video Player Styles */
+
+.video-container {
+  padding-bottom: 56.25%; /* 16:9 aspect ratio */
+  min-height: 300px;
+  overflow: hidden;
+}
+
+.video-element {
+  object-fit: contain;
+  background: #000;
+  transition: transform 0.3s ease;
+  transform: scale(var(--video-zoom, 1));
+}
+
+/* Custom Video Controls */
+.video-controls {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 10;
+}
+
+.video-container:hover .video-controls {
+  opacity: 1;
+}
+
+/* Fullscreen mode adjustments */
+.video-container:fullscreen {
+  padding-bottom: 0;
+  min-height: 100vh;
+  background: #000;
+}
+
+.video-container:fullscreen .video-controls {
+  opacity: 1;
+}

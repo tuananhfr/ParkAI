@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install:*)",
+      "Bash(timeout 10 python:*)",
+      "Bash(exit 0)",
+      "Bash(curl:*)",
+      "Bash(dir /B \"d:\\\\workspace\\\\trainAI\\\\parkAI\\\\camera_IP\\\\backend\")"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+# CPU-only requirements (for development without GPU)
+# Cài đặt: pip install -r requirements-cpu.txt
+
+# Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.5.3
+PyYAML==6.0.1
+aiohttp==3.9.1
+python-multipart==0.0.6
+
+# Computer Vision
+opencv-python==4.9.0.80
+numpy==1.26.3
+
+# PyTorch CPU-only (nhẹ hơn, không cần CUDA)
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.0.0
+torchvision>=0.15.0
+
+# YOLO
+ultralytics>=8.0.0

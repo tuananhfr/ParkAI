@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>License Plate Detection - Real-time Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #00ff00;
+        }
+
+        .controls {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+        }
+
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 1280px;
+            margin: 20px 0;
+            background-color: #000;
+            border: 2px solid #00ff00;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #00ff00;
+            color: #000;
+            border: none;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background-color: #00cc00;
+        }
+
+        button.stop {
+            background-color: #ff0000;
+            color: #fff;
+        }
+
+        button.stop:hover {
+            background-color: #cc0000;
+        }
+
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #333;
+            border-left: 4px solid #00ff00;
+            border-radius: 4px;
+        }
+
+        .stats {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+        }
+
+        .stat-item {
+            margin: 10px 0;
+        }
+
+        input {
+            padding: 8px;
+            margin: 5px;
+            font-size: 14px;
+            background-color: #333;
+            color: #fff;
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+
+        label {
+            margin: 0 10px;
+        }
+
+        .detection-log {
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 10px;
+            background-color: #111;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 License Plate Detection - Real-time Test</h1>
+
+        <div class="controls">
+            <h3>Camera Controls</h3>
+            <label>Camera ID:</label>
+            <input type="text" id="cameraId" value="camera1" />
+
+            <label>RTSP URL / Camera Index:</label>
+            <input type="text" id="rtspUrl" value="0" placeholder="0 for webcam or rtsp://..." style="width: 400px;" />
+
+            <br><br>
+
+            <label>Confidence Threshold:</label>
+            <input type="number" id="confThreshold" value="0.25" step="0.05" min="0" max="1" />
+
+            <label>IOU Threshold:</label>
+            <input type="number" id="iouThreshold" value="0.45" step="0.05" min="0" max="1" />
+
+            <br><br>
+
+            <button onclick="startDetection()">▶️ Start Detection</button>
+            <button class="stop" onclick="stopDetection()">⏹️ Stop Detection</button>
+            <button onclick="getStats()">📊 Get Stats</button>
+        </div>
+
+        <div class="status" id="status">
+            Status: Not connected
+        </div>
+
+        <div class="video-container">
+            <video id="video" autoplay playsinline muted></video>
+            <canvas id="canvas"></canvas>
+        </div>
+
+        <div class="stats">
+            <h3>Statistics</h3>
+            <div class="stat-item">
+                <strong>WebSocket Status:</strong> <span id="wsStatus">Disconnected</span>
+            </div>
+            <div class="stat-item">
+                <strong>Total Detections:</strong> <span id="totalDetections">0</span>
+            </div>
+            <div class="stat-item">
+                <strong>Last Detection Time:</strong> <span id="lastDetectionTime">-</span>
+            </div>
+
+            <h4>Detection Log:</h4>
+            <div class="detection-log" id="detectionLog"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+        const WS_URL = 'ws://localhost:5000/ws/detections';
+
+        let ws = null;
+        let currentDetections = [];
+        let totalDetections = 0;
+        let lastDetectionTime = 0;
+        let animationFrameId = null;
+
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+
+        // Connect WebSocket
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log('WebSocket already connected');
+                return;
+            }
+
+            ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('wsStatus').textContent = 'Connected ✅';
+                document.getElementById('status').textContent = 'Status: WebSocket connected';
+            };
+
+            ws.onmessage = (event) => {
+                const message = JSON.parse(event.data);
+
+                if (message.type === 'detections') {
+                    currentDetections = message.data || [];
+                    lastDetectionTime = Date.now();
+
+                    // Update stats
+                    totalDetections += currentDetections.length;
+                    document.getElementById('totalDetections').textContent = totalDetections;
+                    document.getElementById('lastDetectionTime').textContent = new Date().toLocaleTimeString();
+
+                    // Log detections
+                    if (currentDetections.length > 0) {
+                        const log = document.getElementById('detectionLog');
+                        const logEntry = document.createElement('div');
+                        logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${currentDetections.length} detection(s)`;
+                        log.insertBefore(logEntry, log.firstChild);
+
+                        // Keep only last 20 entries
+                        while (log.children.length > 20) {
+                            log.removeChild(log.lastChild);
+                        }
+                    }
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                document.getElementById('wsStatus').textContent = 'Error ❌';
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('wsStatus').textContent = 'Disconnected ⚠️';
+                document.getElementById('status').textContent = 'Status: WebSocket disconnected';
+            };
+        }
+
+        // Start detection
+        async function startDetection() {
+            const cameraId = document.getElementById('cameraId').value;
+            const rtspUrl = document.getElementById('rtspUrl').value;
+            const confThreshold = parseFloat(document.getElementById('confThreshold').value);
+            const iouThreshold = parseFloat(document.getElementById('iouThreshold').value);
+
+            try {
+                const response = await fetch(`${API_URL}/api/detection/start/${cameraId}?rtsp_url=${encodeURIComponent(rtspUrl)}&conf_threshold=${confThreshold}&iou_threshold=${iouThreshold}`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('status').textContent = `Status: ${result.message}`;
+
+                    // Connect WebSocket if not connected
+                    connectWebSocket();
+
+                    // Start canvas drawing loop
+                    startDrawing();
+
+                    // Try to open webcam preview (only works for local cameras)
+                    if (rtspUrl === '0' || rtspUrl === '1' || rtspUrl === '2') {
+                        await startWebcamPreview(parseInt(rtspUrl));
+                    }
+                } else {
+                    alert('Failed to start detection');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error starting detection: ' + error);
+            }
+        }
+
+        // Stop detection
+        async function stopDetection() {
+            const cameraId = document.getElementById('cameraId').value;
+
+            try {
+                const response = await fetch(`${API_URL}/api/detection/stop/${cameraId}`, {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                document.getElementById('status').textContent = `Status: ${result.message}`;
+
+                // Stop drawing
+                if (animationFrameId) {
+                    cancelAnimationFrame(animationFrameId);
+                }
+
+                // Stop webcam
+                if (video.srcObject) {
+                    video.srcObject.getTracks().forEach(track => track.stop());
+                    video.srcObject = null;
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Error stopping detection: ' + error);
+            }
+        }
+
+        // Get stats
+        async function getStats() {
+            try {
+                const response = await fetch(`${API_URL}/api/detection/stats`);
+                const stats = await response.json();
+                console.log('Detection stats:', stats);
+                alert('Check console for stats');
+            } catch (error) {
+                console.error('Error:', error);
+            }
+        }
+
+        // Start webcam preview (for local cameras only)
+        async function startWebcamPreview(cameraIndex) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        deviceId: cameraIndex ? { exact: cameraIndex } : undefined,
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                });
+                video.srcObject = stream;
+            } catch (error) {
+                console.warn('Could not access webcam:', error);
+            }
+        }
+
+        // Drawing loop
+        function startDrawing() {
+            function draw() {
+                const now = Date.now();
+
+                // Resize canvas to match video
+                if (video.videoWidth > 0) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                }
+
+                // Clear canvas
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                // Check if detections are recent (within 1 second)
+                if (now - lastDetectionTime <= 1000 && currentDetections.length > 0) {
+                    // Draw detections
+                    currentDetections.forEach(detection => {
+                        const [x, y, w, h] = detection.bbox;
+                        const conf = detection.confidence;
+                        const label = `${detection.class} (${(conf * 100).toFixed(0)}%)`;
+
+                        // Draw rectangle
+                        ctx.strokeStyle = '#00FF00';
+                        ctx.lineWidth = 3;
+                        ctx.strokeRect(x, y, w, h);
+
+                        // Draw label background
+                        ctx.font = 'bold 16px Arial';
+                        const textWidth = ctx.measureText(label).width;
+                        ctx.fillStyle = '#00FF00';
+                        ctx.fillRect(x, y - 25, textWidth + 10, 25);
+
+                        // Draw label text
+                        ctx.fillStyle = '#000';
+                        ctx.fillText(label, x + 5, y - 5);
+                    });
+                }
+
+                animationFrameId = requestAnimationFrame(draw);
+            }
+
+            draw();
+        }
+
+        // Auto-connect WebSocket on page load
+        connectWebSocket();
+    </script>
+</body>
+</html>

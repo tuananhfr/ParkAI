@@ -91,6 +91,17 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
     userEditedRef.current = userEdited;
   }, [userEdited]);
 
+  // Reset UI sau khi đã lưu DB xong
+  const resetPlateUI = () => {
+    setPlateImage(null);
+    setPlateText("");
+    plateTextRef.current = "";
+    setPlateSource("");
+    setUserEdited(false);
+    userEditedRef.current = false;
+    setCannotReadPlate(false);
+  };
+
   useEffect(() => {
     plateTextRef.current = plateText;
   }, [plateText]);
@@ -598,6 +609,9 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
                   setTimeout(() => onHistoryUpdate(), 500);
                 }
 
+                //Reset ảnh và input để sẵn sàng cho lượt tiếp theo
+                resetPlateUI();
+
                 //Refresh vehicleInfo sau khi location được cập nhật (de dam bao location hien thi ngay)
                 //Neu la PARKING_LOT camera va co location trong result, refresh vehicleInfo
                 if (
@@ -820,6 +834,9 @@ const CameraView = ({ camera, onHistoryUpdate }) => {
           if (onHistoryUpdate) {
             setTimeout(() => onHistoryUpdate(), 500);
           }
+
+          //Sau khi lưu DB thủ công xong, clear ảnh/input cho lượt mới
+          resetPlateUI();
         } else {
           setNotificationMessage(
             result.error ||
